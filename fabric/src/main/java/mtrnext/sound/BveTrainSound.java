@@ -7,6 +7,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.Level;
 
 import java.io.BufferedReader;
@@ -18,26 +19,23 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * [0.8] BVE 声音桥——4.0 车包的声音在 YMTR 里播放。
+ * [0.8→0.9] BVE 声音桥——4.0 车包的声音在 YMTR 里播放。
  * <p>
  * 解析链：{@code assets/<ns>/sounds/<base>/sound.cfg}（INI）+
  * powerfreq/powervol/brakefreq/brakevol.csv（速度-档位调速表）。
  * <p>
- * 播放策略（0.8 基础版）：
- * <ul>
- *   <li>playNearestCar：按当前速度查 powerFreq/powerVol 表选 motor 档位播放
- *       （pitch=freq，volume=vol）；</li>
- *   <li>playAllCars：同上（就近车为锚点）；</li>
- *   <li>playAllCarsDoorOpening：门开/关门音（doorOpen/doorClose）；</li>
- *   <li>run/flange/noise 常驻循环音后续按 YMTR 声音管线的 tick 语义接入。</li>
- * </ul>
- * 资源名约定：cfg 里的 {@code motor0.wav} → 实际资源 {@code sounds/<base>/motor0.ogg}
- * （车包打包时 wav 已转 ogg，样本实证）。
+ * [0.9] 实时速度采样：createTrainInstance 持有 {@link TrainClient}，
+ * 播放时经 {@code speed} 字段（米/tick → km/h ×3.6×20）取真实速度
+ * 查调速表；门回调保持即时音。速度字段 javap 实证（TrainClient.speed
+ * 继承自 Train，米/tick）。
  */
 public final class BveTrainSound extends TrainSoundBase {
 
-	private final String soundBase;   // 如 mtr:s700_dg1000a
-	private final String cfgFolder;   // 资源域前缀，如 mtr
+	private final String soundBase;
+	private final String cfgFolder;
+
+	/** 播放速度采样：createTrainInstance 时捕获宿主列车实例 */
+	private TrainClient hostTrain;
 
 	private static final Map<String, BveSoundConfig> CFG_CACHE = new ConcurrentHashMap<>();
 
@@ -47,18 +45,54 @@ public final class BveTrainSound extends TrainSoundBase {
 	}
 
 	public static BveTrainSound create(String bveSoundBaseResource) {
-		// bveSoundBaseResource 如 "s700_dg1000a"（车包 vehicles[].bveSoundBaseResource）
-		// 资源路径约定: assets/<ns>/sounds/<base>/sound.cfg — ns 车包主体是 mtr
 		return new BveTrainSound(bveSoundBaseResource, "mtr");
 	}
 
 	@Override
 	public TrainSoundBase createTrainInstance(TrainClient train) {
-		return new BveTrainSound(soundBase, cfgFolder);
+		final BveTrainSound s = new BveTrainSound(soundBase, cfgFolder);
+		s.hostTrain = train; // [0.9] 持有宿主 → 实时速度
+		return s;
 	}
 
 	private BveSoundConfig config() {
 		return CFG_CACHE.computeIfAbsent(soundBase, k -> load());
+	}
+
+	/** [0.9] 宿主列车实时速度（km/h）——TrainClient.speed 为米/tick */
+	private double speedKmh() {
+		try {
+			if (hostTrain != null) {
+				final double mPerTick = speedField(hostTrain);
+				return Math.abs(mPerTick) * 72.0; // 米/tick × 20 tick/s × 3.6 s·km/h
+			}
+		} catch (final Throwable ignore) {
+			// 字段不可达时回退默认速度
+		}
+		return 40.0;
+	}
+
+	private static java.lang.reflect.Field findSpeedField(Class<?> cls) throws NoSuchFieldException {
+		for (Class<?> c = cls; c != null; c = c.getSuperclass()) {
+			try {
+				final java.lang.reflect.Field f = c.getDeclaredField("speed");
+				f.setAccessible(true);
+				return f;
+			} catch (NoSuchFieldException ignore) {
+				// 沿父类链找(Train.speed 在两层上)
+			}
+		}
+		throw new NoSuchFieldException("speed");
+	}
+
+	private double speedField(TrainClient train) {
+		try {
+			final java.lang.reflect.Field f = findSpeedField(train.getClass());
+			f.setAccessible(true);
+			return f.getDouble(train);
+		} catch (final Throwable t) {
+			return 0.55; // ≈40km/h 的米/tick 基准
+		}
 	}
 
 	private BveSoundConfig load() {
@@ -115,12 +149,12 @@ public final class BveTrainSound extends TrainSoundBase {
 
 	@Override
 	public void playNearestCar(Level world, BlockPos pos, int carNumber) {
-		playMotor(world, pos, 1); // 0.8 基础: 档位 1
+		playMotor(world, pos);
 	}
 
 	@Override
 	public void playAllCars(Level world, BlockPos pos, int unused) {
-		playMotor(world, pos, 1);
+		playMotor(world, pos);
 	}
 
 	@Override
@@ -131,18 +165,18 @@ public final class BveTrainSound extends TrainSoundBase {
 		}
 	}
 
-	private void playMotor(Level world, BlockPos pos, int motorIndex) {
+	/** [0.9] 实时速度驱动：查表取 pitch/vol 播 motor 档位 1 */
+	private void playMotor(Level world, BlockPos pos) {
 		final BveSoundConfig cfg = config();
 		if (cfg.motor.isEmpty()) {
 			return;
 		}
-		// 0.8 基础版: 无速度输入接口(TrainSoundBase 的回调无速度参数),
-		// 用固定中速采样; 0.9 接 TrainClient 的 speed 字段
+		final double speed = speedKmh();
 		final float pitch = (float) Math.max(0.5,
-				BveSoundConfig.sampleTable(cfg.powerFreqTable, 40.0, motorIndex));
+				BveSoundConfig.sampleTable(cfg.powerFreqTable, speed, 1));
 		final float vol = (float) Math.max(0.1,
-				BveSoundConfig.sampleTable(cfg.powerVolTable, 40.0, motorIndex));
-		final String clip = cfg.motor.get(String.valueOf(motorIndex));
+				BveSoundConfig.sampleTable(cfg.powerVolTable, speed, 1));
+		final String clip = cfg.motor.get("1");
 		if (clip != null && !clip.isEmpty() && vol > 0.01F) {
 			play(world, pos, clip, vol, pitch);
 		}
@@ -152,12 +186,10 @@ public final class BveTrainSound extends TrainSoundBase {
 		try {
 			final String res = clipName.endsWith(".wav") || clipName.endsWith(".ogg")
 					? clipName.substring(0, clipName.lastIndexOf('.')) : clipName;
-			// 资源: assets/<ns>/sounds/<base>/<clip> — SoundEvent 走sounds.json 注册或
-			// 直接 ResourceLocation 播放(1.20.1 支持未注册 id 播 raw 文件)
 			final ResourceLocation id = new ResourceLocation(cfgFolder, soundBase + "/" + res);
 			world.playSound(null, pos,
-					SoundEvent.createVariableRangeEvent(id), // 未经 sounds.json 的直通播放
-					net.minecraft.sounds.SoundSource.BLOCKS, volume, pitch);
+					SoundEvent.createVariableRangeEvent(id),
+					SoundSource.BLOCKS, volume, pitch);
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("bve play failed: {}", clipName);
 		}
