@@ -185,6 +185,17 @@ public final class FormationScreen extends Screen {
 			}).bounds(x1, Math.min(y + 4, this.height - 90), LIST_W, 18).build());
 		}
 
+		// [0.15] 反转全部（一键整列掉头 — 重联/折返场景）
+		if (!formation.cars.isEmpty()) {
+			addRenderableWidget(Button.builder(Component.literal("Flip All"), b -> {
+				for (int i = 0; i < formation.cars.size(); i++) {
+					final Formation.Car c = formation.cars.get(i);
+					formation.cars.set(i, new Formation.Car(c.vehicleId, !c.forward));
+				}
+				rebuild();
+			}).bounds(x1 + 60, Math.min(y + 4, this.height - 90), LIST_W - 60, 18).build());
+		}
+
 		// 保存并关闭（同时把编组应用到 YMTR 的 Siding 车辆配置）
 		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
 				.bounds(this.width / 2 - 100, this.height - 28, 200, 20).build());
