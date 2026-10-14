@@ -33,6 +33,10 @@ public final class TrainTypeBridge {
 
 	/**
 	 * 把全部 4.0 车辆注册进 YMTR 的 TrainClientRegistry（资源重载时调用）。
+	 * <p>
+	 * [0.6] 完整构造 TrainProperties：12 参构造器注入
+	 * bbmodel 渲染器（{@link mtrnext.client.render.BbModelTrainRenderer}），
+	 * 车辆外观与几何全部来自 4.0 车包。
 	 *
 	 * @return 注册的车型数
 	 */
@@ -42,9 +46,19 @@ public final class TrainTypeBridge {
 			for (final java.util.Map.Entry<String, VehicleResource> e : VehiclePackLoader.getVehicles().entrySet()) {
 				final VehicleResource res = e.getValue();
 				final String trainId = familyOf(res.id);
-				final TrainProperties props = TrainProperties.getBlankProperties();
-				// TrainProperties 的字段是 final（构造器注入）——blank 实例字段为默认值，
-				// 0.6 会换成完整构造（渲染器/声音）；0.5 先保证 id 可解析。
+				final mtr.client.TrainProperties props = new mtr.client.TrainProperties(
+						trainId,
+						net.minecraft.network.chat.Component.literal(res.name == null || res.name.isEmpty() ? trainId : res.name),
+						res.id,                       // description 先用全 id（4.0 车包无独立 description 字段）
+						"",                          // wikipediaArticle
+						res.color,
+						0.0F,                        // riderOffset（4.0 legacyRiderOffset 未接）
+						0.0F,                        // riderOffsetDismounting
+						(float) res.bogie1Position,  // bogiePosition
+						res.hasGangway1 && res.hasGangway2 ? false : false, // isJacobsBogie（4.0 无对应概念）
+						res.hasGangway1 || res.hasGangway2,                // hasGangwayConnection
+						new mtrnext.client.render.BbModelTrainRenderer(res.id),
+						new mtrnext.sound.BlankTrainSound());           // 声音 0.7 接 BVE
 				TrainClientRegistry.register(trainId, props);
 				count++;
 			}
