@@ -140,6 +140,27 @@ public final class FormationScreen extends Screen {
 		guiGraphics.drawCenteredString(this.font,
 				Component.literal(String.format("%d cars, %.1f blocks total", formation.cars.size(), formation.getTotalLength())),
 				this.width / 2, 30, 0xAAAAFF);
+
+		// [0.2] 屏内 3D 编组预览：编组列车横向排开（俯视 35° 视角，缩放按编组长自适应）
+		if (!formation.cars.isEmpty()) {
+			try {
+				final com.mojang.blaze3d.vertex.PoseStack pose = guiGraphics.pose();
+				pose.pushPose();
+				// 视角：屏幕下三分之一处为原点，等距俯视
+				final float scale = (float) Math.min(0.8, 6.0 / Math.max(1, formation.cars.size()));
+				pose.translate(this.width / 2.0, this.height * 0.72, 100.0);
+				pose.scale(scale, -scale, scale); // GUI 坐标系 Y 翻转 → 模型正立
+				pose.mulPose(com.mojang.math.Axis.XP.rotationDegrees(35)); // 俯视
+				final var tex = mtrnext.client.render.FormationPreviewRenderer.textureOf(formation);
+				final var vc = Minecraft.getInstance().renderBuffers().bufferSource()
+						.getBuffer(net.minecraft.client.renderer.RenderType.entityCutoutNoCull(tex));
+				mtrnext.client.render.FormationPreviewRenderer.render(pose, vc, sidingId);
+				Minecraft.getInstance().renderBuffers().bufferSource().endBatch();
+				pose.popPose();
+			} catch (final Throwable t) {
+				MtrNext.LOGGER.debug("formation 3d preview failed", t);
+			}
+		}
 	}
 
 	@Override
