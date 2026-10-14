@@ -150,8 +150,10 @@ public final class BbModelLoader {
 		}
 		final JsonArray uv = f.getAsJsonArray("uv");
 		final float u1 = f(uv, 0), v1 = f(uv, 1), u2 = f(uv, 2), v2 = f(uv, 3);
-		// MC UV 16 基准 vs bbmodel resolution（默认 16, 样本 24 — 按 16/分辨率缩放）
-		cube.texOffs((int) u1, (int) v1).addBox(x1, y1, z1, x2 - x1, y2 - y1, z2 - z1,
+		// [0.9.5] UV 精度修复：texOffs 只支持 int 偏移，但 bbmodel 的 UV 常带小数
+		// （如 4.5）——整数截断会让贴图错位半像素。方案：Math.round 保最大精度，
+		// 残余亚像素偏差在 24×24 车包贴图上不可见（<0.5/24 ≈ 2%）。
+		cube.texOffs(Math.round(u1), Math.round(v1)).addBox(x1, y1, z1, x2 - x1, y2 - y1, z2 - z1,
 				net.minecraft.client.model.geom.builders.CubeDeformation.NONE);
 		return true;
 	}
