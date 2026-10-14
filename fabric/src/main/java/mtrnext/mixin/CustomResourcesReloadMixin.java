@@ -26,6 +26,7 @@ public abstract class CustomResourcesReloadMixin {
 	private static void mtrnext$reload4xPacks(net.minecraft.server.packs.resources.ResourceManager manager, CallbackInfo ci) {
 		try {
 			mtrnext.client.render.BbModelLoader.invalidate();
+			mtrnext.client.render.Properties4xLoader.invalidate();
 			mtrnext.pack.VehiclePackLoader.reload(manager);
 			// [0.5] 4.0 车辆注册进 YMTR 车型表（发车/渲染可解析 family 名）
 			mtrnext.formation.TrainTypeBridge.registerAll4xVehicles();

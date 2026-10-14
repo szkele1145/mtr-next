@@ -67,12 +67,77 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 
 	@Override
 	public void renderConnection(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ, Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip, double y, double width, double height, float angleX, float angleZ) {
-		// 0.6: 贯通道留空（0.7 接 properties_*.json 四向贴图程序化面）
+		// [0.7] 贯通道程序化渲染：properties_*.json 的 gangway 贴图 + 高度
+		try {
+			final VehicleResource res = VehiclePackLoader.getVehicle(trainId);
+			if (res == null || res.models.isEmpty()) {
+				return;
+			}
+			final VehicleResource.ModelLayer layer = res.models.get(0);
+			if (layer.propertiesResource.isEmpty()) {
+				return;
+			}
+			final Properties4xLoader.GangwayProperties props =
+					Properties4xLoader.load(Minecraft.getInstance().getResourceManager(), layer.propertiesResource);
+			drawConnectionFace(fromX, fromZ, toX, toZ, fromXFlip, fromZFlip, toXFlip, toZFlip,
+					y, angleX, angleZ,
+					props.gangwayInnerSide, props.gangwayHeight);
+		} catch (final Throwable t) {
+			MtrNext.LOGGER.debug("renderConnection failed", t);
+		}
 	}
 
 	@Override
 	public void renderBarrier(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ, Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip, double y, double width, double height, float angleX, float angleZ) {
-		// 0.6: 端墙留空（0.7 接）
+		// [0.7] 端墙程序化渲染：barrier 贴图组
+		try {
+			final VehicleResource res = VehiclePackLoader.getVehicle(trainId);
+			if (res == null || res.models.isEmpty()) {
+				return;
+			}
+			final VehicleResource.ModelLayer layer = res.models.get(0);
+			if (layer.propertiesResource.isEmpty()) {
+				return;
+			}
+			final Properties4xLoader.GangwayProperties props =
+					Properties4xLoader.load(Minecraft.getInstance().getResourceManager(), layer.propertiesResource);
+			drawConnectionFace(fromX, fromZ, toX, toZ, fromXFlip, fromZFlip, toXFlip, toZFlip,
+					y, angleX, angleZ,
+					props.barrierInnerSide, props.barrierHeight);
+		} catch (final Throwable t) {
+			MtrNext.LOGGER.debug("renderBarrier failed", t);
+		}
+	}
+
+	/**
+	 * 在基类给的 8 顶点框架内画连接面（侧面贴图两条带，顶/底面 0.7.1 校准后接）。
+	 */
+	private void drawConnectionFace(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ,
+			Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip,
+			double y, float angleX, float angleZ, String sideTex, float faceHeight) {
+		if (sideTex == null || sideTex.isEmpty()) {
+			return;
+		}
+		final var vc = vertexConsumers.getBuffer(
+				net.minecraft.client.renderer.RenderType.entityCutoutNoCull(texLocation(sideTex)));
+		final var pose = matrices.last().pose();
+		final var normal = matrices.last().normal();
+		// 正向边带: fromX→toZ 底边, 顶部 = y(基类给的连接面顶部高度)
+		quad(vc, pose, normal, fromX, toZ, y, faceHeight);
+		// 翻转边带
+		quad(vc, pose, normal, fromXFlip, toZFlip, y, faceHeight);
+	}
+
+	private void quad(com.mojang.blaze3d.vertex.VertexConsumer vc,
+			org.joml.Matrix4f pose, org.joml.Matrix3f normal,
+			Vec3 left, Vec3 right, double topY, double h) {
+		final float lx = (float) left.x, lz = (float) left.z;
+		final float rx = (float) right.x, rz = (float) right.z;
+		final float by = (float) (topY - h);
+		vc.vertex(pose, lx, by, lz).color(255, 255, 255, 255).uv(0, 1).endVertex();
+		vc.vertex(pose, rx, by, rz).color(255, 255, 255, 255).uv(1, 1).endVertex();
+		vc.vertex(pose, rx, (float) topY, rz).color(255, 255, 255, 255).uv(1, 0).endVertex();
+		vc.vertex(pose, lx, (float) topY, lz).color(255, 255, 255, 255).uv(0, 0).endVertex();
 	}
 
 	private static ResourceLocation texLocation(String resource) {
