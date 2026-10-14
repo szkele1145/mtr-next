@@ -58,7 +58,9 @@ public final class TrainTypeBridge {
 						res.hasGangway1 && res.hasGangway2 ? false : false, // isJacobsBogie（4.0 无对应概念）
 						res.hasGangway1 || res.hasGangway2,                // hasGangwayConnection
 						new mtrnext.client.render.BbModelTrainRenderer(res.id),
-						new mtrnext.sound.BlankTrainSound());           // 声音 0.7 接 BVE
+						res.bveSoundBaseResource.isEmpty()
+								? new mtrnext.sound.BlankTrainSound()
+								: mtrnext.sound.BveTrainSound.create(res.bveSoundBaseResource));
 				TrainClientRegistry.register(trainId, props);
 				count++;
 			}
