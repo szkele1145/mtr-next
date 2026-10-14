@@ -16,14 +16,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 在 YMTR 的 SidingScreen.init() 尾部追加"编组"按钮——
  * 仅当 4.0 车包存在时显示；3.2-only 用户界面零变化。
  * <p>
- * mixin 宿主是 SavedRailScreenBase<Siding> 的子类，本身继承 Screen——
- * 本 mixin 继承 Screen 以获得 addRenderableWidget/width/height 的可调用形态
- * （mixin 合并语义：这些成员在目标类运行期由宿主链提供）。
- * 构造器仅满足 javac 的继承语法，mixin 框架不会调用它。
- * <p>
- * Siding 持久键：0.1 用界面实例哈希临时键；
- * 0.2 计划经宿主泛型字段（javap 见 SavedRailScreenBase 的宿主 data 字段）
- * 精确取 Siding.id。
+ * <b>Siding 持久键（javap 实证链）</b>：
+ * SidingScreen → SavedRailScreenBase<Siding>（protected final T savedRailBase）
+ * → SavedRailBase → NameColorDataBase（**public final long id**）。
+ * mixin 经宿主的 savedRailBase 字段转型 mtr.data.Siding 后直接读 .id
+ * （public 字段无需 accessor）——编组存储按这个长期 id 键控，
+ * 界面重开/重启世界均稳定。
  */
 @Mixin(targets = "mtr.screen.SidingScreen", remap = false)
 public abstract class SidingScreenMixin extends Screen {
@@ -38,15 +36,34 @@ public abstract class SidingScreenMixin extends Screen {
 			if (!VehiclePackLoader.has4xVehicles()) {
 				return; // 3.2-only: 零 UI 变化
 			}
-			final java.util.UUID sidingKey = java.util.UUID.nameUUIDFromBytes(
-					("mtrnext-screen-" + System.identityHashCode(this)).getBytes());
+			// 持久键：宿主 SavedRailScreenBase.savedRailBase 的 id（long, public final）
+			final long sidingId = mtrnext$hostSidingId();
+			if (sidingId == 0) {
+				return;
+			}
+			final java.util.UUID key = new java.util.UUID(0, sidingId);
 			addRenderableWidget(Button.builder(
 							net.minecraft.network.chat.Component.literal("编组 [MTR-Next]"),
-							b -> FormationScreen.open(sidingKey))
+							b -> FormationScreen.open(key))
 					.bounds(this.width - 120, 8, 110, 18).build());
-			MtrNext.LOGGER.info("Formation button added to SidingScreen");
+			MtrNext.LOGGER.info("Formation button added to SidingScreen (siding id {})", sidingId);
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("formation button inject failed", t);
 		}
+	}
+
+	/** 从宿主实例取 Siding 持久 id——经 SavedRailScreenBase 的 protected savedRailBase 字段 */
+	private long mtrnext$hostSidingId() {
+		try {
+			final java.lang.reflect.Field f = mtr.screen.SavedRailScreenBase.class.getDeclaredField("savedRailBase");
+			f.setAccessible(true);
+			final Object savedRail = f.get(this);
+			if (savedRail instanceof mtr.data.Siding siding) {
+				return siding.id;
+			}
+		} catch (final Throwable t) {
+			MtrNext.LOGGER.debug("host siding id lookup failed", t);
+		}
+		return 0;
 	}
 }
