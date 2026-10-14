@@ -160,12 +160,14 @@ public final class BveTrainSound extends TrainSoundBase {
 	public void playNearestCar(Level world, BlockPos pos, int carNumber) {
 		playMotor(world, pos);
 		playBrakeRelease(world, pos); // [0.16] 低速缓解音
+		playAmbient(world, pos);      // [0.17] Run/Flange/Noise 环境音
 	}
 
 	@Override
 	public void playAllCars(Level world, BlockPos pos, int unused) {
 		playMotor(world, pos);
 		playBrakeRelease(world, pos);
+		playAmbient(world, pos);
 	}
 
 	@Override
@@ -215,6 +217,39 @@ public final class BveTrainSound extends TrainSoundBase {
 			return;
 		}
 		play(world, pos, cfg.brakeReleaseFull, 0.9F, 1.0F);
+	}
+
+	/**
+	 * [0.17] 环境音组：Run（行走音，速度相关 pitch）+ Flange（曲线音，
+	 * 简化为速度 >30km/h 触发）+ Noise（常驻底噪）。
+	 * 0.17 的曲线检测用简化阈值——YMTR 侧线数据的曲线状态不可直接取
+	 * （TrainClient 无曲线字段），完整版需 hook Rail 几何，0.18 评估。
+	 */
+	private void playAmbient(Level world, BlockPos pos) {
+		final BveSoundConfig cfg = config();
+		final double speed = speedKmh();
+
+		// Run：速度归一化 pitch（0.8~1.4 随 40km/h 线性）
+		if (!cfg.run.isEmpty()) {
+			final String runClip = cfg.run.get("0");
+			if (runClip != null && !runClip.isEmpty() && speed > 2.0) {
+				final float pitch = (float) (0.8 + Math.min(0.6, speed / 40.0 * 0.6));
+				play(world, pos, runClip, 0.4F, pitch);
+			}
+		}
+
+		// Flange：中高速触发（曲线音的简化近似）
+		if (!cfg.flange.isEmpty() && speed > 30.0) {
+			final String flangeClip = cfg.flange.get("0");
+			if (flangeClip != null && !flangeClip.isEmpty()) {
+				play(world, pos, flangeClip, 0.35F, 1.0F);
+			}
+		}
+
+		// Noise：常驻底噪（低速时也响）
+		if (!cfg.noise.isEmpty()) {
+			play(world, pos, cfg.noise, 0.15F, 1.0F);
+		}
 	}
 
 	private void play(Level world, BlockPos pos, String clipName, float volume, float pitch) {
