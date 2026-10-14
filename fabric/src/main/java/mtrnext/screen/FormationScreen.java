@@ -48,6 +48,9 @@ public final class FormationScreen extends Screen {
 
 	private final List<VehicleResource> available = new ArrayList<>();
 	private int selectedAvailable = -1;
+	/** [0.9.4] 校验失败的可见反馈（2 秒超时） */
+	private String rejectReason = null;
+	private long rejectAt = 0;
 
 	private static final int LIST_W = 140;
 	private static final int ROW_H = 22;
@@ -89,16 +92,28 @@ public final class FormationScreen extends Screen {
 			y += ROW_H;
 		}
 
-		// "加到编组"（默认正向；连接面校验失败时提示）
+		// "加到编组"（默认正向；连接面校验失败时在 Add 按钮上提示）
 		addRenderableWidget(Button.builder(Component.literal("Add >>"), b -> {
 			if (selectedAvailable >= 0 && selectedAvailable < available.size()) {
 				final VehicleResource res = available.get(selectedAvailable);
 				if (formation.canAddCar(formation.cars.size(), res, true)) {
 					formation.cars.add(new Formation.Car(res.id, true));
+					rejectReason = null;
+					rebuild();
+				} else {
+					// [0.9.4] 校验失败的可见反馈（此前静默无响应）
+					rejectReason = "Can't couple: no compatible face / not same family";
+					rejectAt = System.currentTimeMillis();
 					rebuild();
 				}
 			}
 		}).bounds(x0, Math.min(y + 4, this.height - 90), LIST_W, 20).build());
+
+		// [0.9.4] 校验失败提示行（Add 下方, 2 秒内有效）
+		if (rejectReason != null && System.currentTimeMillis() - rejectAt < 2000) {
+			addRenderableWidget(Button.builder(Component.literal(rejectReason), b -> { })
+					.bounds(x0, Math.min(y + 26, this.height - 70), LIST_W, 16).build());
+		}
 
 		// 右列：编组序列（含每节的方向翻转/删除）
 		final int x1 = x0 + LIST_W + 20;
