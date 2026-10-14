@@ -41,6 +41,8 @@ public abstract class SidingScreenMixin extends Screen {
 			if (sidingId == 0) {
 				return;
 			}
+			// [0.4] 宿主 Siding 实例传递（编组屏关闭时桥接车辆配置）
+			mtrnext.util.HostSidingHolder.set(mtrnext$hostSiding());
 			final java.util.UUID key = new java.util.UUID(0, sidingId);
 			addRenderableWidget(Button.builder(
 							net.minecraft.network.chat.Component.literal("编组 [MTR-Next]"),
@@ -49,6 +51,17 @@ public abstract class SidingScreenMixin extends Screen {
 			MtrNext.LOGGER.info("Formation button added to SidingScreen (siding id {})", sidingId);
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("formation button inject failed", t);
+		}
+	}
+
+	/** 取宿主 Siding 实例（供编组桥接） */
+	private Object mtrnext$hostSiding() {
+		try {
+			final java.lang.reflect.Field f = mtr.screen.SavedRailScreenBase.class.getDeclaredField("savedRailBase");
+			f.setAccessible(true);
+			return f.get(this);
+		} catch (final Throwable t) {
+			return null;
 		}
 	}
 

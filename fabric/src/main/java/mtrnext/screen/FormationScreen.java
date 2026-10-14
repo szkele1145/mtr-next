@@ -123,9 +123,23 @@ public final class FormationScreen extends Screen {
 			y += ROW_H;
 		}
 
-		// 保存并关闭
+		// 保存并关闭（同时把编组应用到 YMTR 的 Siding 车辆配置）
 		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
 				.bounds(this.width / 2 - 100, this.height - 28, 200, 20).build());
+	}
+
+	@Override
+	public void onClose() {
+		FormationStore.put(sidingId, formation);
+		// [0.4] 编组 → Siding 车辆配置桥接（baseTrainType/trainCars）
+		final Object hostSiding = mtrnext.util.HostSidingHolder.consume();
+		if (hostSiding != null) {
+			final int applied = mtrnext.formation.FormationSidingBridge.applyToSiding(hostSiding, formation);
+			if (applied > 0) {
+				MtrNext.LOGGER.info("Applied formation ({} cars) to YMTR siding", applied);
+			}
+		}
+		Minecraft.getInstance().setScreen(parent);
 	}
 
 	private static String shortName(String id) {
@@ -161,12 +175,6 @@ public final class FormationScreen extends Screen {
 				MtrNext.LOGGER.debug("formation 3d preview failed", t);
 			}
 		}
-	}
-
-	@Override
-	public void onClose() {
-		FormationStore.put(sidingId, formation);
-		Minecraft.getInstance().setScreen(parent);
 	}
 
 	public static void open(UUID sidingId) {
