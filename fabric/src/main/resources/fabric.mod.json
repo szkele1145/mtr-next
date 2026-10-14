@@ -12,6 +12,7 @@
 		"sources": "https://github.com/szkele1145/mtr-next"
 	},
 	"license": "MIT",
+	"icon": "icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [

@@ -8,6 +8,7 @@
 		"ItemBlockClickingBaseMixin"
 	],
 	"client": [
+		"CustomResourcesReloadMixin",
 		"RenderTrainsPreviewMixin",
 		"SidingScreenMixin"
 	],
