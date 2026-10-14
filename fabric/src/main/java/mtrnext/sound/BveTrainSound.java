@@ -62,11 +62,7 @@ public final class BveTrainSound extends TrainSoundBase {
 		return CFG_CACHE.computeIfAbsent(soundBase, k -> load());
 	}
 
-	/** [0.9.1] 反射字段缓存——播放是热路径（每 tick 多次），Field 解析只做一次 */
-	private static final java.util.Map<Class<?>, java.lang.reflect.Field> SPEED_FIELD_CACHE =
-			new java.util.concurrent.ConcurrentHashMap<>();
-
-	/** [0.9] 宿主列车实时速度（km/h）——TrainClient.speed 为米/tick */
+/** [0.9] 宿主列车实时速度（km/h）——TrainClient.speed 为米/tick */
 	private double speedKmh() {
 		try {
 			if (hostTrain != null) {
@@ -79,29 +75,10 @@ public final class BveTrainSound extends TrainSoundBase {
 		return 40.0;
 	}
 
-	private static java.lang.reflect.Field findSpeedField(Class<?> cls) throws NoSuchFieldException {
-		final java.lang.reflect.Field cached = SPEED_FIELD_CACHE.get(cls);
-		if (cached != null) {
-			return cached;
-		}
-		for (Class<?> c = cls; c != null; c = c.getSuperclass()) {
-			try {
-				final java.lang.reflect.Field f = c.getDeclaredField("speed");
-				f.setAccessible(true);
-				SPEED_FIELD_CACHE.put(cls, f);
-				return f;
-			} catch (NoSuchFieldException ignore) {
-				// 沿父类链找(Train.speed 在两层上)
-			}
-		}
-		throw new NoSuchFieldException("speed");
-	}
-
+	/** [0.22] 反射统一走 HierarchyFieldFinder（speed/doorValue 两处重复模式提取） */
 	private double speedField(TrainClient train) {
 		try {
-			final java.lang.reflect.Field f = findSpeedField(train.getClass());
-			f.setAccessible(true);
-			return f.getDouble(train);
+			return mtrnext.util.HierarchyFieldFinder.find(train, "speed").getDouble(train);
 		} catch (final Throwable t) {
 			return 0.55; // ≈40km/h 的米/tick 基准
 		}
@@ -195,8 +172,9 @@ public final class BveTrainSound extends TrainSoundBase {
 			return;
 		}
 		try {
-			final java.lang.reflect.Field f = findDoorValueField(hostTrain.getClass());
-			final float current = f.getFloat(hostTrain);
+			// [0.22] 反射统一走 HierarchyFieldFinder
+			final float current = mtrnext.util.HierarchyFieldFinder
+					.find(hostTrain, "doorValue").getFloat(hostTrain);
 			if (lastDoorValue >= 0 && current < lastDoorValue - 0.05F && lastDoorValue > 0.1F) {
 				// 由增转减 + 此前确实开着 → 关门沿
 				play(world, pos, cfg.doorClose, 1.0F, 1.0F);
@@ -205,27 +183,6 @@ public final class BveTrainSound extends TrainSoundBase {
 		} catch (final Throwable ignore) {
 			// doorValue 不可达时跳过边沿检测
 		}
-	}
-
-	private static final java.util.Map<Class<?>, java.lang.reflect.Field> DOOR_FIELD_CACHE =
-			new java.util.concurrent.ConcurrentHashMap<>();
-
-	private static java.lang.reflect.Field findDoorValueField(Class<?> cls) throws NoSuchFieldException {
-		final java.lang.reflect.Field cached = DOOR_FIELD_CACHE.get(cls);
-		if (cached != null) {
-			return cached;
-		}
-		for (Class<?> c = cls; c != null; c = c.getSuperclass()) {
-			try {
-				final java.lang.reflect.Field f = c.getDeclaredField("doorValue");
-				f.setAccessible(true);
-				DOOR_FIELD_CACHE.put(cls, f);
-				return f;
-			} catch (NoSuchFieldException ignore) {
-				// TrainClient.doorValue 在本类(非父类) — javap 实证 private float doorValue
-			}
-		}
-		throw new NoSuchFieldException("doorValue");
 	}
 
 	/** [0.9] 实时速度驱动：查表取 pitch/vol 播 motor 档位 1 */
