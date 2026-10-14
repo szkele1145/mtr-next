@@ -27,6 +27,8 @@ public abstract class CustomResourcesReloadMixin {
 		try {
 			mtrnext.client.render.BbModelLoader.invalidate();
 			mtrnext.pack.VehiclePackLoader.reload(manager);
+			// [0.5] 4.0 车辆注册进 YMTR 车型表（发车/渲染可解析 family 名）
+			mtrnext.formation.TrainTypeBridge.registerAll4xVehicles();
 			if (mtrnext.pack.VehiclePackLoader.has4xVehicles()) {
 				MtrNext.LOGGER.info("MTR-Next: 4.0-format vehicles active alongside native 3.x resources");
 			}
