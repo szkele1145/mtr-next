@@ -123,6 +123,14 @@ public final class FormationScreen extends Screen {
 			y += ROW_H;
 		}
 
+		// [0.9.3] 清空编组（右列下方，编组非空时可用）
+		if (!formation.cars.isEmpty()) {
+			addRenderableWidget(Button.builder(Component.literal("Clear All"), b -> {
+				formation.cars.clear();
+				rebuild();
+			}).bounds(x1, Math.min(y + 4, this.height - 90), LIST_W, 18).build());
+		}
+
 		// 保存并关闭（同时把编组应用到 YMTR 的 Siding 车辆配置）
 		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
 				.bounds(this.width / 2 - 100, this.height - 28, 200, 20).build());
