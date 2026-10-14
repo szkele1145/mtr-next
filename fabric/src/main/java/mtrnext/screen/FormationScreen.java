@@ -217,6 +217,19 @@ public final class FormationScreen extends Screen {
 				Component.literal(String.format("%d cars, %.1f blocks total", formation.cars.size(), formation.getTotalLength())),
 				this.width / 2, 30, 0xAAAAFF);
 
+		// [0.14] 选中车详情条：编组决策辅助（几何/连接面摘要）
+		if (selectedAvailable >= 0 && selectedAvailable < available.size()) {
+			final VehicleResource sel = available.get(selectedAvailable);
+			final String faces = String.format("%s|%s",
+					sel.hasGangway1 || sel.hasBarrier1 ? "1:Y" : "1:-",
+					sel.hasGangway2 || sel.hasBarrier2 ? "Y" : "-");
+			final String detail = String.format("%s  L=%.1f W=%.1f  faces[%s]  bogie %.0f/%.0f",
+					shortName(sel.id), sel.length, sel.width, faces,
+					sel.bogie1Position, sel.bogie2Position);
+			guiGraphics.drawCenteredString(this.font,
+					Component.literal(detail), this.width / 2, 62, 0x88FF88);
+		}
+
 		// [0.7.1] 可用车列表的车色图标条：每个按钮左侧画该车 color 的色块
 		int iconY = 40;
 		for (int i = 0; i < available.size() && i < 8; i++) {
