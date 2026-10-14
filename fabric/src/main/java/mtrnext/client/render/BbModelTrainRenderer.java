@@ -82,6 +82,10 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			drawConnectionFace(fromX, fromZ, toX, toZ, fromXFlip, fromZFlip, toXFlip, toZFlip,
 					y, angleX, angleZ,
 					props.gangwayInnerSide, props.gangwayHeight);
+			// [0.9.2] 顶/底封板：gangwayInnerTop/Bottom 贴图的水平横面
+			drawConnectionCap(fromX, fromZ, toX, toZ, y, props.gangwayInnerTop);
+			drawConnectionCap(fromXFlip, fromZFlip, toXFlip, toZFlip, y, props.gangwayInnerTop);
+			drawConnectionCap(fromX, toX, fromZ, toZ, y - props.gangwayHeight, props.gangwayInnerBottom);
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("renderConnection failed", t);
 		}
