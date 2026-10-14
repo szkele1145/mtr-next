@@ -50,6 +50,8 @@ public final class FormationScreen extends Screen {
 	private int selectedAvailable = -1;
 	/** [0.12] 可用车列表页码 */
 	private int availablePage = 0;
+	/** [0.13] 编组序列页码 */
+	private int consistPage = 0;
 	/** [0.9.4] 校验失败的可见反馈（2 秒超时） */
 	private String rejectReason = null;
 	private long rejectAt = 0;
@@ -133,10 +135,11 @@ public final class FormationScreen extends Screen {
 					.bounds(x0, Math.min(y + 26, this.height - 70), LIST_W, 16).build());
 		}
 
-		// 右列：编组序列（含每节的方向翻转/删除）
+		// 右列：编组序列（[0.13] 分页 — 编组超 8 节时翻页；含每节的方向翻转/删除）
 		final int x1 = x0 + LIST_W + 20;
 		y = y0;
-		for (int i = 0; i < formation.cars.size() && i < 8; i++) {
+		final int consistStart = consistPage * 8;
+		for (int i = consistStart; i < formation.cars.size() && i < consistStart + 8; i++) {
 			final Formation.Car car = formation.cars.get(i);
 			final int idx = i;
 			addRenderableWidget(Button.builder(
@@ -156,10 +159,28 @@ public final class FormationScreen extends Screen {
 			y += ROW_H;
 		}
 
+		// [0.13] 编组序列翻页控件
+		final int consistPages = (formation.cars.size() + 7) / 8;
+		if (consistPages > 1) {
+			addRenderableWidget(Button.builder(Component.literal("<"), b -> {
+				consistPage = (consistPage + consistPages - 1) % consistPages;
+				rebuild();
+			}).bounds(x1, y + 2, 30, 16).build());
+			addRenderableWidget(Button.builder(Component.literal(">"), b -> {
+				consistPage = (consistPage + 1) % consistPages;
+				rebuild();
+			}).bounds(x1 + LIST_W - 30, y + 2, 30, 16).build());
+			addRenderableWidget(Button.builder(
+					Component.literal((consistPage + 1) + "/" + consistPages), b -> { })
+					.bounds(x1 + 32, y + 2, LIST_W - 64, 16).build());
+			y += 18;
+		}
+
 		// [0.9.3] 清空编组（右列下方，编组非空时可用）
 		if (!formation.cars.isEmpty()) {
 			addRenderableWidget(Button.builder(Component.literal("Clear All"), b -> {
 				formation.cars.clear();
+				consistPage = 0;
 				rebuild();
 			}).bounds(x1, Math.min(y + 4, this.height - 90), LIST_W, 18).build());
 		}
