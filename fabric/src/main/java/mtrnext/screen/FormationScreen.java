@@ -48,6 +48,8 @@ public final class FormationScreen extends Screen {
 
 	private final List<VehicleResource> available = new ArrayList<>();
 	private int selectedAvailable = -1;
+	/** [0.12] 可用车列表页码 */
+	private int availablePage = 0;
 	/** [0.9.4] 校验失败的可见反馈（2 秒超时） */
 	private String rejectReason = null;
 	private long rejectAt = 0;
@@ -77,9 +79,10 @@ public final class FormationScreen extends Screen {
 		final int x0 = this.width / 2 - (LIST_W * 2 + 20) / 2;
 		final int y0 = 40;
 
-		// 左列：可用车
+		// 左列：可用车（[0.12] 分页 — 每页 8 个，车包超 8 种车时翻页浏览）
 		int y = y0;
-		for (int i = 0; i < available.size() && i < 8; i++) {
+		final int pageStart = availablePage * 8;
+		for (int i = pageStart; i < available.size() && i < pageStart + 8; i++) {
 			final VehicleResource res = available.get(i);
 			final int idx = i;
 			addRenderableWidget(Button.builder(
@@ -90,6 +93,21 @@ public final class FormationScreen extends Screen {
 							})
 					.bounds(x0, y, LIST_W, ROW_H - 2).build());
 			y += ROW_H;
+		}
+		// [0.12] 翻页控件
+		final int totalPages = (available.size() + 7) / 8;
+		if (totalPages > 1) {
+			addRenderableWidget(Button.builder(Component.literal("<"), b -> {
+				availablePage = (availablePage + totalPages - 1) % totalPages;
+				rebuild();
+			}).bounds(x0, y + 2, 30, 16).build());
+			addRenderableWidget(Button.builder(Component.literal(">"), b -> {
+				availablePage = (availablePage + 1) % totalPages;
+				rebuild();
+			}).bounds(x0 + LIST_W - 30, y + 2, 30, 16).build());
+			addRenderableWidget(Button.builder(
+					Component.literal((availablePage + 1) + "/" + totalPages), b -> { })
+					.bounds(x0 + 32, y + 2, LIST_W - 64, 16).build());
 		}
 
 		// "加到编组"（默认正向；连接面校验失败时在 Add 按钮上提示）
