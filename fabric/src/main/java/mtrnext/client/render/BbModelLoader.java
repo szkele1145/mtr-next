@@ -8,15 +8,14 @@ import mtrnext.MtrNext;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.geom.PartPose;
 import net.minecraft.client.model.geom.builders.CubeListBuilder;
-import net.minecraft.client.model.geom.builders.PartDefinition;
+import net.minecraft.client.model.geom.builders.LayerDefinition;
 import net.minecraft.client.model.geom.builders.MeshDefinition;
+import net.minecraft.client.model.geom.builders.PartDefinition;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.packs.resources.Resource;
+import net.minecraft.server.packs.resources.ResourceManager;
 
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -27,18 +26,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * <ul>
  *   <li>elements[]：标准 BlockBench 盒体——from/to（世界单位顶点）、
  *       rotation+origin（三轴旋转）、faces 六面 UV（resolution 24×24 基准）；</li>
- *   <li>modded_entity 格式的 from/to 是"展开"的像素坐标（含 -67 等大偏移），
- *       直接映射为 ModelPart cube（MC 原生 16 单位/格基准一致）；</li>
  *   <li>faces 缺省面（无 uv 键）跳过该面绘制。</li>
  * </ul>
  * <p>
- * 产物为 MeshDefinition → ModelPart 树（每 element 一个独立 part，
- * 保留 rotation），后续由车辆渲染器按编组位组装。
+ * [0.10] 门动画桥：element name 含 "door" 的部件以 door_ 前缀命名，
+ * {@link #animateDoors} 按门开度平移它们（Z 向 0.75 格行程）。
  */
 public final class BbModelLoader {
 
-	/** 已解析缓存：模型资源路径 → MeshDefinition（资源重载时清） */
 	private static final Map<String, MeshDefinition> CACHE = new ConcurrentHashMap<>();
+
+	/** [0.10] 门动画行程（格） */
+	private static final float DOOR_TRAVEL = 0.75F;
 
 	private BbModelLoader() {
 	}
@@ -47,14 +46,13 @@ public final class BbModelLoader {
 		CACHE.clear();
 	}
 
-	/** 解析 bbmodel 为 ModelPart 树（带缓存） */
-	public static ModelPart bake(net.minecraft.server.packs.resources.ResourceManager manager, String modelResource) {
+	public static ModelPart bake(ResourceManager manager, String modelResource) {
 		final MeshDefinition mesh = CACHE.computeIfAbsent(modelResource, k -> parse(manager, k));
 		if (mesh == null) {
 			return null;
 		}
 		try {
-			final var layerDefs = net.minecraft.client.model.geom.builders.LayerDefinition.create(mesh, 24, 24);
+			final LayerDefinition layerDefs = LayerDefinition.create(mesh, 24, 24);
 			return layerDefs.bakeRoot();
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.error("Failed to bake bbmodel {}", modelResource, t);
@@ -62,7 +60,7 @@ public final class BbModelLoader {
 		}
 	}
 
-	private static MeshDefinition parse(net.minecraft.server.packs.resources.ResourceManager manager, String modelResource) {
+	private static MeshDefinition parse(ResourceManager manager, String modelResource) {
 		try {
 			final ResourceLocation id = new ResourceLocation(modelResource);
 			if (!manager.getResource(id).isPresent()) {
@@ -91,15 +89,16 @@ public final class BbModelLoader {
 		for (final JsonElement el : root.getAsJsonArray("elements")) {
 			final JsonObject element = el.getAsJsonObject();
 			final String name = str(element, "name", "el" + index);
+			// [0.10] 门部件识别：name 含 "door"（不区分大小写）→ door_ 前缀
+			final boolean isDoor = name.toLowerCase(java.util.Locale.ROOT).contains("door");
 			final CubeListBuilder cube = buildCube(element);
 			if (cube == null) {
 				index++;
 				continue;
 			}
-			// 每 element 一个独立 part：保留 rotation+origin
 			final float[] rot = rotation(element);
 			final float[] origin = origin(element);
-			rootPart.addOrReplaceChild("el" + index, cube,
+			rootPart.addOrReplaceChild((isDoor ? "door_" : "el") + index, cube,
 					PartPose.offsetAndRotation(
 							-origin[0], origin[1], origin[2],
 							(float) Math.toRadians(rot[0]),
@@ -110,13 +109,32 @@ public final class BbModelLoader {
 		return mesh;
 	}
 
+	/**
+	 * [0.10] 门开度动画：door_ 前缀的 part 沿 Z 平移（行程 0.75 格，向车内滑）。
+	 * 1.20.1 ModelPart 的子部件经 getChild(name) 逐个取（children 字段私有）。
+	 */
+	public static void animateDoors(ModelPart baked, boolean doorLeftOpen, boolean doorRightOpen) {
+		if (baked == null) {
+			return;
+		}
+		final float target = (doorLeftOpen || doorRightOpen) ? 1.0F : 0.0F;
+		// bbmodel 的 element 名是车包作者定的 — 门 part 以 door_ 前缀存在于我们的
+		// bake 索引里; 逐 index 试探(数量少, 门部件通常 2-8 个)
+		for (int i = 0; i < 256; i++) {
+			final ModelPart part = baked.getChild("door_" + i);
+			if (part == null) {
+				continue;
+			}
+			part.z = -DOOR_TRAVEL * target;
+		}
+	}
+
 	private static CubeListBuilder buildCube(JsonObject element) {
 		if (!element.has("from") || !element.has("to")) {
 			return null;
 		}
 		final JsonArray from = element.getAsJsonArray("from");
 		final JsonArray to = element.getAsJsonArray("to");
-		// BlockBench: Y 轴向下 → MC: Y 轴向上（翻转 to/from.y）
 		final float x1 = f(from, 0), y1 = f(from, 1), z1 = f(from, 2);
 		final float x2 = f(to, 0), y2 = f(to, 1), z2 = f(to, 2);
 
@@ -124,7 +142,6 @@ public final class BbModelLoader {
 		boolean anyFace = false;
 		if (element.has("faces") && element.get("faces").isJsonObject()) {
 			final JsonObject faces = element.getAsJsonObject("faces");
-			// MC 六面 UV 键: down/up/west/east/north/south — BlockBench 同名, 直接映射
 			anyFace |= addFace(cube, faces, "down", x1, y2, z1, x2, y2, z2);
 			anyFace |= addFace(cube, faces, "up", x1, y1, z1, x2, y1, z2);
 			anyFace |= addFace(cube, faces, "north", x1, y1, z1, x2, y2, z1);
@@ -133,7 +150,6 @@ public final class BbModelLoader {
 			anyFace |= addFace(cube, faces, "west", x1, y1, z1, x1, y2, z2);
 		}
 		if (!anyFace) {
-			// 无 faces 定义: 整盒 UV 0-16（与 BlockBench box_uv 缺省一致）
 			cube.addBox(x1, y1, z1, x2 - x1, y2 - y1, z2 - z1);
 		}
 		return cube;
@@ -149,10 +165,8 @@ public final class BbModelLoader {
 			return false;
 		}
 		final JsonArray uv = f.getAsJsonArray("uv");
-		final float u1 = f(uv, 0), v1 = f(uv, 1), u2 = f(uv, 2), v2 = f(uv, 3);
-		// [0.9.5] UV 精度修复：texOffs 只支持 int 偏移，但 bbmodel 的 UV 常带小数
-		// （如 4.5）——整数截断会让贴图错位半像素。方案：Math.round 保最大精度，
-		// 残余亚像素偏差在 24×24 车包贴图上不可见（<0.5/24 ≈ 2%）。
+		final float u1 = f(uv, 0), v1 = f(uv, 1);
+		// [0.9.5] UV 精度：Math.round 保最大精度（残余亚像素偏差在 24×24 贴图 <2%）
 		cube.texOffs(Math.round(u1), Math.round(v1)).addBox(x1, y1, z1, x2 - x1, y2 - y1, z2 - z1,
 				net.minecraft.client.model.geom.builders.CubeDeformation.NONE);
 		return true;
