@@ -31,6 +31,10 @@ public final class RailPreviewRenderer {
 			return;
 		}
 
+		// [0.3] 曲线精确预览：优先用 YMTR 同源几何采样，失败回退直线
+		final Vec3[] curve = RailPreviewGeometry.sampleCurve(mc, first, second);
+		final int segments = curve != null ? curve.length - 1 : SEGMENTS;
+
 		final com.mojang.blaze3d.vertex.Tesselator tesselator = com.mojang.blaze3d.vertex.Tesselator.getInstance();
 		final com.mojang.blaze3d.vertex.BufferBuilder buffer = tesselator.getBuilder();
 
@@ -41,12 +45,21 @@ public final class RailPreviewRenderer {
 
 		buffer.begin(com.mojang.blaze3d.vertex.VertexFormat.Mode.DEBUG_LINE_STRIP,
 				com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR);
-		for (int i = 0; i <= SEGMENTS; i++) {
-			final double t = (double) i / SEGMENTS;
-			buffer.vertex(
-							start.x + (end.x - start.x) * t,
-							start.y + (end.y - start.y) * t + 0.5,
-							start.z + (end.z - start.z) * t)
+		for (int i = 0; i <= segments; i++) {
+			final Vec3 p;
+			if (curve != null) {
+				p = curve[i];
+				if (p == null) {
+					continue;
+				}
+			} else {
+				final double t = (double) i / SEGMENTS;
+				p = new Vec3(
+						start.x + (end.x - start.x) * t,
+						start.y + (end.y - start.y) * t + 0.5,
+						start.z + (end.z - start.z) * t);
+			}
+			buffer.vertex(p.x, p.y, p.z)
 					.color(PREVIEW_R, PREVIEW_G, PREVIEW_B, PREVIEW_A).endVertex();
 		}
 		tesselator.end();
