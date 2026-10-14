@@ -1,0 +1,82 @@
+plugins {
+	// 与 mtr-turbo 相同的兼容矩阵：loom 1.9.2 + Gradle 8.11
+	id 'fabric-loom' version '1.9.2'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+	archivesName = "mtr-next-${project.mod_version}-1.20.1-fabric"
+}
+
+repositories {
+	maven {
+		name = "Tencent"
+		url = "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/"
+	}
+	maven {
+		name = "Fabric"
+		url = "https://maven.fabricmc.net/"
+	}
+	maven {
+		name = "Architectury"
+		url = "https://maven.architectury.dev/"
+	}
+	mavenCentral()
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:1.20.1"
+	mappings loom.layered() {
+		officialMojangMappings()
+	}
+	// YMTR 3.6.4.2 作为编译目标与运行时依赖（MTR Next 挂钩其 mtr.* 类）
+	modImplementation files("libs/ymtr-fabric-1.20.1.jar")
+	modImplementation "net.fabricmc:fabric-loader:0.15.11"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:0.92.2+1.20.1"
+	modRuntimeOnly files("libs/ymtr-fabric-1.20.1.jar")
+	modRuntimeOnly "dev.architectury:architectury-fabric:9.2.14"
+}
+
+loom {
+	mixin {
+		defaultRefmapName = "mtr-next.refmap.json"
+	}
+}
+
+// 产物命名规范（继承 mtr-turbo 纪律）：mtr-next-<modver>-<mcver>-<loader>.jar
+tasks.named('remapJar') {
+	archiveFileName = "mtr-next-${project.mod_version}-1.20.1-fabric.jar"
+}
+tasks.named('jar') {
+	archiveFileName = "mtr-next-${project.mod_version}-1.20.1-fabric-dev.jar"
+}
+
+processResources {
+	inputs.property "version", project.version
+	filesMatching("fabric.mod.json") {
+		expand "version": project.version
+	}
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_17
+	targetCompatibility = JavaVersion.VERSION_17
+}
+
+sourceSets {
+	main {
+		java {
+			srcDir 'fabric/src/main/java'
+		}
+		resources {
+			srcDir 'fabric/src/main/resources'
+		}
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = "UTF-8"
+	options.release = 17
+}
