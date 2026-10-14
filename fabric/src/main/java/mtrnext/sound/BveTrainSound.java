@@ -178,6 +178,20 @@ public final class BveTrainSound extends TrainSoundBase {
 		}
 	}
 
+	/**
+	 * [0.19] 关门音：doorCloseSoundLength 秒后播 Door Close。
+	 * YMTR 的 TrainSoundBase 只有开门回调（playAllCarsDoorOpening）——
+	 * 关门时机无独立回调，用开门音播放时反向调度：开门 = 关门音的前奏结束。
+	 * 简化实现：开门回调里同时播 close 音（BVE 的 close 音在门关时才该响，
+	 * 但 3.x 无关门回调 —— 播 close 的延迟调度需要 tick 计时器，
+	 * 0.19 先做开门回调的同帧双播标记，0.20 若找到关门信号再拆分）。
+	 */
+	private void playDoorCloseIfNeeded(Level world, BlockPos pos) {
+		final BveSoundConfig cfg = config();
+		// 关门音暂缓：无关门回调，盲目双播会造成开门+关门音重叠。
+		// 记录为已知限制，等 0.20 评估 TrainClient.doorValue 由增转减的边沿。
+	}
+
 	/** [0.9] 实时速度驱动：查表取 pitch/vol 播 motor 档位 1 */
 	private void playMotor(Level world, BlockPos pos) {
 		final BveSoundConfig cfg = config();
@@ -249,6 +263,17 @@ public final class BveTrainSound extends TrainSoundBase {
 		// Noise：常驻底噪（低速时也响）
 		if (!cfg.noise.isEmpty()) {
 			play(world, pos, cfg.noise, 0.15F, 1.0F);
+		}
+
+		// [0.19] Joint：轨道节点经过音 — 速度 >5km/h 时按概率触发
+		//（BVE 语义是每经过一个节点播一次；无节点边沿信号，用速度相关的
+		// 概率近似：40km/h ≈ 每 4 tick 一次 ≈ 节点间距 0.8 格的通过频率）
+		if (!cfg.joint.isEmpty() && speed > 5.0) {
+			final String jointClip = cfg.joint.get("0");
+			if (jointClip != null && !jointClip.isEmpty()
+					&& mtrnext.util.TickRandom.chance(speed / 160.0)) {
+				play(world, pos, jointClip, 0.5F, 1.0F);
+			}
 		}
 	}
 
