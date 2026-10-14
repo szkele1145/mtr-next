@@ -301,7 +301,7 @@ public final class BveTrainSound extends TrainSoundBase {
 			play(world, pos, cfg.noise, 0.15F, 1.0F);
 		}
 
-		// [0.19] Joint：轨道节点经过音 — 速度 >5km/h 时按概率触发
+		// [0.21] Joint：轨道节点经过音 — 速度 >5km/h 时按概率触发
 		//（BVE 语义是每经过一个节点播一次；无节点边沿信号，用速度相关的
 		// 概率近似：40km/h ≈ 每 4 tick 一次 ≈ 节点间距 0.8 格的通过频率）
 		if (!cfg.joint.isEmpty() && speed > 5.0) {
@@ -310,6 +310,13 @@ public final class BveTrainSound extends TrainSoundBase {
 					&& mtrnext.util.TickRandom.chance(speed / 160.0)) {
 				play(world, pos, jointClip, 0.5F, 1.0F);
 			}
+		}
+
+		// [0.21] Shoe：低速制动闸瓦音 — BVE 语义"低于再生制动截止速度的制动"。
+		// 简化：5~15km/h 区间播（再生→空气制动的切换带），vol 随速度下降升高。
+		if (!cfg.shoe.isEmpty() && speed > 5.0 && speed < 15.0) {
+			final float shoeVol = (float) (0.3 + (15.0 - speed) / 10.0 * 0.3);
+			play(world, pos, cfg.shoe, shoeVol, 1.0F);
 		}
 	}
 
