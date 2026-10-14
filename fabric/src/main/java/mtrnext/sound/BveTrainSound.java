@@ -59,6 +59,10 @@ public final class BveTrainSound extends TrainSoundBase {
 		return CFG_CACHE.computeIfAbsent(soundBase, k -> load());
 	}
 
+	/** [0.9.1] 反射字段缓存——播放是热路径（每 tick 多次），Field 解析只做一次 */
+	private static final java.util.Map<Class<?>, java.lang.reflect.Field> SPEED_FIELD_CACHE =
+			new java.util.concurrent.ConcurrentHashMap<>();
+
 	/** [0.9] 宿主列车实时速度（km/h）——TrainClient.speed 为米/tick */
 	private double speedKmh() {
 		try {
@@ -73,10 +77,15 @@ public final class BveTrainSound extends TrainSoundBase {
 	}
 
 	private static java.lang.reflect.Field findSpeedField(Class<?> cls) throws NoSuchFieldException {
+		final java.lang.reflect.Field cached = SPEED_FIELD_CACHE.get(cls);
+		if (cached != null) {
+			return cached;
+		}
 		for (Class<?> c = cls; c != null; c = c.getSuperclass()) {
 			try {
 				final java.lang.reflect.Field f = c.getDeclaredField("speed");
 				f.setAccessible(true);
+				SPEED_FIELD_CACHE.put(cls, f);
 				return f;
 			} catch (NoSuchFieldException ignore) {
 				// 沿父类链找(Train.speed 在两层上)
