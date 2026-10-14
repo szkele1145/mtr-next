@@ -159,11 +159,13 @@ public final class BveTrainSound extends TrainSoundBase {
 	@Override
 	public void playNearestCar(Level world, BlockPos pos, int carNumber) {
 		playMotor(world, pos);
+		playBrakeRelease(world, pos); // [0.16] 低速缓解音
 	}
 
 	@Override
 	public void playAllCars(Level world, BlockPos pos, int unused) {
 		playMotor(world, pos);
+		playBrakeRelease(world, pos);
 	}
 
 	@Override
@@ -189,6 +191,30 @@ public final class BveTrainSound extends TrainSoundBase {
 		if (clip != null && !clip.isEmpty() && vol > 0.01F) {
 			play(world, pos, clip, vol, pitch);
 		}
+
+		// [0.16] Brake 段接线：制动调速表采样（速度 > 表内"再生制动截止"
+		// 时段播 brake 档位音；近零速播 BcReleaseFull 排气缓解音）
+		if (!cfg.brakeFreqTable.isEmpty()) {
+			final float bPitch = (float) Math.max(0.5,
+					BveSoundConfig.sampleTable(cfg.brakeFreqTable, speed, 1));
+			final float bVol = (float) Math.max(0.1,
+					BveSoundConfig.sampleTable(cfg.brakeVolTable, speed, 1));
+			if (bVol > 0.05F) {
+				final String brakeClip = cfg.motor.get("1"); // brake 档位复用 motor 表位
+				if (brakeClip != null && !brakeClip.isEmpty()) {
+					play(world, pos, brakeClip, bVol * 0.8F, bPitch);
+				}
+			}
+		}
+	}
+
+	/** [0.16] 低速缓解音：速度 < 5km/h 且配置有 BcReleaseFull 时播（制动缓解排气） */
+	private void playBrakeRelease(Level world, BlockPos pos) {
+		final BveSoundConfig cfg = config();
+		if (cfg.brakeReleaseFull.isEmpty() || speedKmh() > 5.0) {
+			return;
+		}
+		play(world, pos, cfg.brakeReleaseFull, 0.9F, 1.0F);
 	}
 
 	private void play(Level world, BlockPos pos, String clipName, float volume, float pitch) {
