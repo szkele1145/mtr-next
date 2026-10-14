@@ -155,6 +155,17 @@ public final class FormationScreen extends Screen {
 				Component.literal(String.format("%d cars, %.1f blocks total", formation.cars.size(), formation.getTotalLength())),
 				this.width / 2, 30, 0xAAAAFF);
 
+		// [0.7.1] 可用车列表的车色图标条：每个按钮左侧画该车 color 的色块
+		int iconY = 40;
+		for (int i = 0; i < available.size() && i < 8; i++) {
+			final VehicleResource res = available.get(i);
+			final int c = res.color | 0xFF000000;
+			final int xIcon = this.width / 2 - (LIST_W * 2 + 20) / 2 + 2;
+			guiGraphics.fill(xIcon, iconY + 3, xIcon + 6, iconY + ROW_H - 5, c);
+			guiGraphics.renderOutline(xIcon, iconY + 3, 6, ROW_H - 8, 0xFF000000);
+			iconY += ROW_H;
+		}
+
 		// [0.2] 屏内 3D 编组预览：编组列车横向排开（俯视 35° 视角，缩放按编组长自适应）
 		if (!formation.cars.isEmpty()) {
 			try {

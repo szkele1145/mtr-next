@@ -110,7 +110,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	}
 
 	/**
-	 * 在基类给的 8 顶点框架内画连接面（侧面贴图两条带，顶/底面 0.7.1 校准后接）。
+	 * 在基类给的 8 顶点框架内画连接面（侧面贴图两条带 + 顶/底横面）。
 	 */
 	private void drawConnectionFace(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ,
 			Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip,
@@ -126,6 +126,23 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		quad(vc, pose, normal, fromX, toZ, y, faceHeight);
 		// 翻转边带
 		quad(vc, pose, normal, fromXFlip, toZFlip, y, faceHeight);
+	}
+
+	/**
+	 * [0.7.1] 顶/底横面：车端连接面的水平封板（top/bottom 贴图）。
+	 * 顶点：fromX→toX（或翻转组）在 y 高度上的水平 quad。
+	 */
+	private void drawConnectionCap(Vec3 a, Vec3 b, Vec3 c, Vec3 d, double capY, String capTex) {
+		if (capTex == null || capTex.isEmpty()) {
+			return;
+		}
+		final var vc = vertexConsumers.getBuffer(
+				net.minecraft.client.renderer.RenderType.entityCutoutNoCull(texLocation(capTex)));
+		final var pose = matrices.last().pose();
+		vc.vertex(pose, (float) a.x, (float) capY, (float) a.z).color(255, 255, 255, 255).uv(0, 0).endVertex();
+		vc.vertex(pose, (float) b.x, (float) capY, (float) b.z).color(255, 255, 255, 255).uv(1, 0).endVertex();
+		vc.vertex(pose, (float) c.x, (float) capY, (float) c.z).color(255, 255, 255, 255).uv(1, 1).endVertex();
+		vc.vertex(pose, (float) d.x, (float) capY, (float) d.z).color(255, 255, 255, 255).uv(0, 1).endVertex();
 	}
 
 	private void quad(com.mojang.blaze3d.vertex.VertexConsumer vc,
