@@ -110,22 +110,20 @@ public final class BbModelLoader {
 	}
 
 	/**
-	 * [0.10] 门开度动画：door_ 前缀的 part 沿 Z 平移（行程 0.75 格，向车内滑）。
-	 * 1.20.1 ModelPart 的子部件经 getChild(name) 逐个取（children 字段私有）。
+	 * [0.11] 门开度动画（渐进版）：door_ 前缀 part 由 DoorAnimator 按
+	 * 帧率平滑推进（0.10 的瞬时布尔升级）。布尔参数经 tickBool 兼容。
 	 */
-	public static void animateDoors(ModelPart baked, boolean doorLeftOpen, boolean doorRightOpen) {
+	public static void animateDoors(ModelPart baked, boolean doorLeftOpen, boolean doorRightOpen, float delta) {
 		if (baked == null) {
 			return;
 		}
-		final float target = (doorLeftOpen || doorRightOpen) ? 1.0F : 0.0F;
-		// bbmodel 的 element 名是车包作者定的 — 门 part 以 door_ 前缀存在于我们的
-		// bake 索引里; 逐 index 试探(数量少, 门部件通常 2-8 个)
+		final boolean open = doorLeftOpen || doorRightOpen;
 		for (int i = 0; i < 256; i++) {
 			final ModelPart part = baked.getChild("door_" + i);
 			if (part == null) {
 				continue;
 			}
-			part.z = -DOOR_TRAVEL * target;
+			DoorAnimator.tickBool(part, open, delta);
 		}
 	}
 

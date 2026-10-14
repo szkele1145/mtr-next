@@ -54,8 +54,9 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			final ResourceLocation tex = texLocation(layer.textureResource);
 			final var vc = vertexConsumers.getBuffer(
 					net.minecraft.client.renderer.RenderType.entityCutoutNoCull(tex));
-			// [0.10] 门动画桥：door_ 前缀部件按门参数平移
-			BbModelLoader.animateDoors(model, doorLeftOpen, doorRightOpen);
+			// [0.11] 门动画（渐进）：door_ 部件按门参数+帧率平滑推进
+			BbModelLoader.animateDoors(model, doorLeftOpen, doorRightOpen,
+					net.minecraft.client.Minecraft.getInstance().getDeltaFrameTime() / 20.0F);
 			matrices.pushPose();
 			matrices.translate(x, y, z);
 			matrices.mulPose(com.mojang.math.Axis.YP.rotationDegrees(rotationY));
