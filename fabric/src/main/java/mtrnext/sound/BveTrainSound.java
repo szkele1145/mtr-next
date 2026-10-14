@@ -37,6 +37,9 @@ public final class BveTrainSound extends TrainSoundBase {
 	/** 播放速度采样：createTrainInstance 时捕获宿主列车实例 */
 	private TrainClient hostTrain;
 
+	/** [0.20] doorValue 边沿检测：由增转减 = 真实关门信号 */
+	private float lastDoorValue = -1.0F;
+
 	private static final Map<String, BveSoundConfig> CFG_CACHE = new ConcurrentHashMap<>();
 
 	private BveTrainSound(String soundBase, String cfgFolder) {
@@ -161,6 +164,7 @@ public final class BveTrainSound extends TrainSoundBase {
 		playMotor(world, pos);
 		playBrakeRelease(world, pos); // [0.16] 低速缓解音
 		playAmbient(world, pos);      // [0.17] Run/Flange/Noise 环境音
+		tickDoorCloseEdge(world, pos); // [0.20] 关门沿检测
 	}
 
 	@Override
@@ -168,6 +172,7 @@ public final class BveTrainSound extends TrainSoundBase {
 		playMotor(world, pos);
 		playBrakeRelease(world, pos);
 		playAmbient(world, pos);
+		tickDoorCloseEdge(world, pos);
 	}
 
 	@Override
@@ -179,17 +184,48 @@ public final class BveTrainSound extends TrainSoundBase {
 	}
 
 	/**
-	 * [0.19] 关门音：doorCloseSoundLength 秒后播 Door Close。
-	 * YMTR 的 TrainSoundBase 只有开门回调（playAllCarsDoorOpening）——
-	 * 关门时机无独立回调，用开门音播放时反向调度：开门 = 关门音的前奏结束。
-	 * 简化实现：开门回调里同时播 close 音（BVE 的 close 音在门关时才该响，
-	 * 但 3.x 无关门回调 —— 播 close 的延迟调度需要 tick 计时器，
-	 * 0.19 先做开门回调的同帧双播标记，0.20 若找到关门信号再拆分）。
+	 * [0.20] Door Close 边沿检测接线：TrainClient.doorValue 由增转减的瞬间
+	 * 播 Door Close 音（此前 0.19 记录为限制，现用 javap 实证的 doorValue
+	 * 字段做真实关门信号——开门时 doorValue 递增，关门时递减）。
+	 * 挂在 playAllCarsDoorOpening 之外的每个播放回调里采样（tick 级）。
 	 */
-	private void playDoorCloseIfNeeded(Level world, BlockPos pos) {
+	private void tickDoorCloseEdge(Level world, BlockPos pos) {
 		final BveSoundConfig cfg = config();
-		// 关门音暂缓：无关门回调，盲目双播会造成开门+关门音重叠。
-		// 记录为已知限制，等 0.20 评估 TrainClient.doorValue 由增转减的边沿。
+		if (cfg.doorClose.isEmpty() || hostTrain == null) {
+			return;
+		}
+		try {
+			final java.lang.reflect.Field f = findDoorValueField(hostTrain.getClass());
+			final float current = f.getFloat(hostTrain);
+			if (lastDoorValue >= 0 && current < lastDoorValue - 0.05F && lastDoorValue > 0.1F) {
+				// 由增转减 + 此前确实开着 → 关门沿
+				play(world, pos, cfg.doorClose, 1.0F, 1.0F);
+			}
+			lastDoorValue = current;
+		} catch (final Throwable ignore) {
+			// doorValue 不可达时跳过边沿检测
+		}
+	}
+
+	private static final java.util.Map<Class<?>, java.lang.reflect.Field> DOOR_FIELD_CACHE =
+			new java.util.concurrent.ConcurrentHashMap<>();
+
+	private static java.lang.reflect.Field findDoorValueField(Class<?> cls) throws NoSuchFieldException {
+		final java.lang.reflect.Field cached = DOOR_FIELD_CACHE.get(cls);
+		if (cached != null) {
+			return cached;
+		}
+		for (Class<?> c = cls; c != null; c = c.getSuperclass()) {
+			try {
+				final java.lang.reflect.Field f = c.getDeclaredField("doorValue");
+				f.setAccessible(true);
+				DOOR_FIELD_CACHE.put(cls, f);
+				return f;
+			} catch (NoSuchFieldException ignore) {
+				// TrainClient.doorValue 在本类(非父类) — javap 实证 private float doorValue
+			}
+		}
+		throw new NoSuchFieldException("doorValue");
 	}
 
 	/** [0.9] 实时速度驱动：查表取 pitch/vol 播 motor 档位 1 */
