@@ -3,7 +3,7 @@
 	"id": "mtr-next",
 	"version": "${version}",
 	"name": "MTR Next",
-	"description": "Brings MTR 4.x features back to YMTR 3.x on MC 1.20.1: rail placement preview, and 4.0-format vehicle packs with custom formations (head-to-head couplings, reconnected consists) | 把 MTR 4.x 的轨道预览与自定义编组带回 YMTR 3.x",
+	"description": "MTR 4.x features on YMTR 3.x (MC 1.20.1): curve-exact rail preview, 4.0-format vehicle packs, custom formations with head-to-head couplings, bbmodel rendering, connection faces, and the complete BVE soundscape - every key of sound.cfg plays | 把 MTR 4.x 的轨道预览、4.0 车包、自定义编组、BVE 声景带回 YMTR 3.x",
 	"authors": [
 		"szkele1145"
 	],
