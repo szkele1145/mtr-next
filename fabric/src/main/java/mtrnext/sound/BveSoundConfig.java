@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -70,7 +71,7 @@ public final class BveSoundConfig {
 		String section = "";
 		for (String raw : lines) {
 			final String line = raw.trim();
-			if (line.isEmpty() || line.startsWith("#") || line.startsWith("BveTs")) {
+			if (line.isEmpty() || line.startsWith("#") || line.toLowerCase(Locale.ROOT).startsWith("bvets")) {
 				continue;
 			}
 			if (line.startsWith("[") && line.endsWith("]")) {
@@ -126,7 +127,7 @@ public final class BveSoundConfig {
 		final List<double[]> out = new ArrayList<>();
 		for (String raw : lines) {
 			final String line = raw.trim();
-			if (line.isEmpty() || line.startsWith("bvets") || line.startsWith("#")) {
+			if (line.isEmpty() || line.toLowerCase(Locale.ROOT).startsWith("bvets") || line.startsWith("#")) {
 				continue;
 			}
 			final String[] parts = line.split(",", -1);

@@ -151,6 +151,7 @@ public final class ParserSelfTest {
 		System.out.println("[BveSoundConfig.parseCfg]");
 		final List<String> lines = new ArrayList<>(List.of(
 				"BveTs Vehicle Sound 3.01:utf-8",
+				"bvets Vehicle Sound 3.01:utf-8",
 				"# comment",
 				"[MTR]",
 				"DoorCloseSoundLength = 2.5",
