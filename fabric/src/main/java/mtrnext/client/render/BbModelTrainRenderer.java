@@ -82,48 +82,59 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		}
 	}
 
-	/** 逐面绘制一盒六面（每面独立 bbmodel UV；缺 UV 面跳过） */
+	/** 逐面绘制一盒六面（每面独立 bbmodel UV；缺 UV 面跳过）
+	 * [0.30] winding 核对：从外部看每面取逆时针序（MC 正面规则）。
+	 * 北面(Z-)、南面(Z+)、西面(X-)已对；东面(X+)原序为顺时针(从 -X 看)
+	 * → 交换对角顶点修正为从 +X 看逆时针。down/up 双面各按地面/顶视
+	 * 观察方向逆时针。UV 对应随顶点交换同步调整。 */
 	private void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
 		// bbmodel Y 向下 → MC Y 向上的翻转由 from/to 交换 y 实现
 		final float y1 = -box.y2, y2 = -box.y1;
 
 		if (box.uvDown != null) {
+			// down 面：从下方看逆时针
 			quad(vc, pose,
-					box.x1, y2, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz,
-					box.uvDown, box);
+					box.x1, y2, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x2, y2, box.z1 + dz, box.x1, y2, box.z1 + dz,
+					box.uvDown);
 		}
 		if (box.uvUp != null) {
+			// up 面：从上方看逆时针
 			quad(vc, pose,
 					box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x1, y1, box.z2 + dz,
-					box.uvUp, box);
+					box.uvUp);
 		}
 		if (box.uvNorth != null) {
+			// north (Z-)：从 -Z 方向看逆时针
 			quad(vc, pose,
-					box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x1, y2, box.z1 + dz,
-					box.uvNorth, box);
+					box.x1, y2, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x1, y1, box.z1 + dz,
+					box.uvNorth);
 		}
 		if (box.uvSouth != null) {
+			// south (Z+)：从 +Z 方向看逆时针
 			quad(vc, pose,
 					box.x1, y1, box.z2 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz,
-					box.uvSouth, box);
+					box.uvSouth);
 		}
 		if (box.uvEast != null) {
+			// east (X+)：从 +X 方向看逆时针
 			quad(vc, pose,
-					box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x2, y2, box.z1 + dz,
-					box.uvEast, box);
+					box.x2, y1, box.z2 + dz, box.x2, y1, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y2, box.z2 + dz,
+					box.uvEast);
 		}
 		if (box.uvWest != null) {
+			// west (X-)：从 -X 方向看逆时针
 			quad(vc, pose,
 					box.x1, y1, box.z1 + dz, box.x1, y1, box.z2 + dz, box.x1, y2, box.z2 + dz, box.x1, y2, box.z1 + dz,
-					box.uvWest, box);
+					box.uvWest);
 		}
 	}
 
-	/** 一面 quad：bbmodel UV 归一化到 24×24 贴图（u1,v1,u2,v2 → 0~1） */
+	/** 一面 quad：bbmodel UV 归一化到 24×24 贴图（u1,v1,u2,v2 → 0~1）
+	 * [0.30] 参数表随 winding 修正同步：v 分量按"y 大 = v 小"（贴图 V 向下） */
 	private void quad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
 			float ax, float ay, float az, float bx, float by, float bz,
 			float cx, float cy, float cz, float dx, float dy, float dz,
-			float[] uv, BbModelLoader.BbBox box) {
+			float[] uv) {
 		final float u1 = uv[0] / 24.0F, v1 = uv[1] / 24.0F, u2 = uv[2] / 24.0F, v2 = uv[3] / 24.0F;
 		vc.vertex(pose, ax, ay, az).color(255, 255, 255, 255).uv(u1, v2).endVertex();
 		vc.vertex(pose, bx, by, bz).color(255, 255, 255, 255).uv(u2, v2).endVertex();
