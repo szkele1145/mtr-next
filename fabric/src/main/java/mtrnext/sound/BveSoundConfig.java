@@ -46,6 +46,8 @@ public final class BveSoundConfig {
 	public final Map<String, String> joint = new LinkedHashMap<>();
 	public String brakeReleaseFull = "";
 	public String brakeReleaseHigh = "";
+	/** [0.25] [Brake] Emergency — 紧急制动音（ERIDU 样本该键为空，可选） */
+	public String emergency = "";
 	public String doorOpen = "";
 	public String doorClose = "";
 	public String noise = "";
@@ -93,6 +95,7 @@ public final class BveSoundConfig {
 				case "Brake" -> {
 					if ("BcReleaseFull".equals(key)) cfg.brakeReleaseFull = value;
 					if ("BcReleaseHigh".equals(key)) cfg.brakeReleaseHigh = value;
+					if ("Emergency".equals(key)) cfg.emergency = value;
 				}
 				case "Door" -> {
 					if ("Open".equals(key)) cfg.doorOpen = value;

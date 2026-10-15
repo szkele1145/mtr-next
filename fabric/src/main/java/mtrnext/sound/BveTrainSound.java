@@ -39,6 +39,8 @@ public final class BveTrainSound extends TrainSoundBase {
 
 	/** [0.20] doorValue 边沿检测：由增转减 = 真实关门信号 */
 	private float lastDoorValue = -1.0F;
+	/** [0.25] speed 边沿检测共享状态：发车排气/紧急制动共用 */
+	private double lastSpeedKmh = -1.0;
 
 	private static final Map<String, BveSoundConfig> CFG_CACHE = new ConcurrentHashMap<>();
 
@@ -144,6 +146,8 @@ public final class BveTrainSound extends TrainSoundBase {
 		playBrakeRelease(world, pos, cfg);  // [0.16] 低速缓解音
 		playAmbient(world, pos, cfg);       // [0.17] Run/Flange/Noise 环境音
 		tickDoorCloseEdge(world, pos, cfg); // [0.20] 关门沿检测
+		tickDepartureEdge(world, pos, cfg); // [0.25] 发车排气沿
+		tickEmergencyBrake(world, pos, cfg); // [0.25] 紧急制动检测
 	}
 
 	@Override
@@ -153,6 +157,8 @@ public final class BveTrainSound extends TrainSoundBase {
 		playBrakeRelease(world, pos, cfg);
 		playAmbient(world, pos, cfg);
 		tickDoorCloseEdge(world, pos, cfg);
+		tickDepartureEdge(world, pos, cfg);
+		tickEmergencyBrake(world, pos, cfg);
 	}
 
 	@Override
@@ -224,6 +230,35 @@ public final class BveTrainSound extends TrainSoundBase {
 			return;
 		}
 		play(world, pos, cfg.brakeReleaseFull, 0.9F, 1.0F);
+	}
+
+	/**
+	 * [0.25] BcReleaseHigh：发车排气音 — speed 由 <2km/h 进入 >2km/h 的
+	 * 起动沿（速度边沿检测，与 0.20 关门沿同模式）。
+	 */
+	private void tickDepartureEdge(Level world, BlockPos pos, BveSoundConfig cfg) {
+		if (cfg.brakeReleaseHigh.isEmpty()) {
+			return;
+		}
+		final double speed = speedKmh();
+		if (lastSpeedKmh >= 0 && lastSpeedKmh < 2.0 && speed >= 2.0) {
+			// 静止→起动沿：发车排气
+			play(world, pos, cfg.brakeReleaseHigh, 0.8F, 1.0F);
+		}
+		lastSpeedKmh = speed;
+	}
+
+	/** [0.25] Emergency（紧急制动）— 速度边沿：急减速（-3km/h/tick 以上）触发 */
+	private void tickEmergencyBrake(Level world, BlockPos pos, BveSoundConfig cfg) {
+		if (cfg.emergency.isEmpty()) {
+			return;
+		}
+		final double speed = speedKmh();
+		if (lastSpeedKmh >= 0 && speed < lastSpeedKmh - 3.0) {
+			// 单 tick 降速 >3km/h = 紧急制动
+			play(world, pos, cfg.emergency, 1.0F, 1.0F);
+		}
+		// lastSpeedKmh 的更新由 tickDepartureEdge 统一做（两者同 tick 只更新一次）
 	}
 
 	/**
