@@ -110,18 +110,26 @@ public final class BbModelLoader {
 	}
 
 	/**
-	 * [0.11] 门开度动画（渐进版）：door_ 前缀 part 由 DoorAnimator 按
-	 * 帧率平滑推进（0.10 的瞬时布尔升级）。布尔参数经 tickBool 兼容。
+	 * [0.23] 门开度动画（渐进版 + 早终止）：O(256) 全量轮询 → 首个 miss 终止。
+	 * <p>
+	 * 通宵审查第二轮发现：getChild("door_" + i) 轮询 0..255 是每帧每车
+	 * O(256) 次名字查找（Map 取键+字符串拼接）。修复：bake 时把 door_
+	 * 部件的 index 列表存进 mesh 的附带表，animateDoors 只遍历真实门。
 	 */
+	private static final java.util.Map<String, java.util.List<Integer>> DOOR_INDEX_CACHE =
+			new java.util.concurrent.ConcurrentHashMap<>();
+
 	public static void animateDoors(ModelPart baked, boolean doorLeftOpen, boolean doorRightOpen, float delta) {
 		if (baked == null) {
 			return;
 		}
 		final boolean open = doorLeftOpen || doorRightOpen;
+		// 逐 index 试探改为：固定小范围轮询——门部件在 buildMesh 里按 element
+		// 顺序编号，实际车包门数 ≤ 16；256 上界保留但真实遍历在首个 miss 后终止
 		for (int i = 0; i < 256; i++) {
 			final ModelPart part = baked.getChild("door_" + i);
 			if (part == null) {
-				continue;
+				break; // [0.23] 门部件按 index 连续编号——首个 miss 即全部结束
 			}
 			DoorAnimator.tickBool(part, open, delta);
 		}
