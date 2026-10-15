@@ -50,6 +50,8 @@ public final class VehicleResource {
 	public final boolean hasBarrier1;
 	public final boolean hasBarrier2;
 	public final String bveSoundBaseResource;
+	/** [0.28] 4.0 车包的 legacyRiderOffset（3.x 骑乘高度回退字段，ERIDU 样本=0.0） */
+	public final double legacyRiderOffset;
 	public final List<ModelLayer> models;
 	public final List<ModelLayer> bogie1Models;
 	public final List<ModelLayer> bogie2Models;
@@ -60,7 +62,8 @@ public final class VehicleResource {
 	private VehicleResource(String id, String name, int color, String transportMode,
 			double length, double width, double b1, double b2,
 			double cp1, double cp2, boolean g1, boolean g2, boolean ba1, boolean ba2,
-			String bve, List<ModelLayer> models, List<ModelLayer> bogie1, List<ModelLayer> bogie2,
+			String bve, double legacyRiderOffset,
+			List<ModelLayer> models, List<ModelLayer> bogie1, List<ModelLayer> bogie2,
 			List<String> posDefs) {
 		this.id = id;
 		this.name = name;
@@ -77,6 +80,7 @@ public final class VehicleResource {
 		this.hasBarrier1 = ba1;
 		this.hasBarrier2 = ba2;
 		this.bveSoundBaseResource = bve;
+		this.legacyRiderOffset = legacyRiderOffset;
 		this.models = models;
 		this.bogie1Models = bogie1;
 		this.bogie2Models = bogie2;
@@ -107,6 +111,7 @@ public final class VehicleResource {
 				bool(o, "hasBarrier1", false),
 				bool(o, "hasBarrier2", false),
 				str(o, "bveSoundBaseResource", ""),
+				num(o, "legacyRiderOffset", 0.0),  // [0.28] 3.x 骑乘高度回退字段
 				models, bogie1, bogie2, posDefs);
 	}
 

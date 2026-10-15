@@ -52,7 +52,7 @@ public final class TrainTypeBridge {
 						res.id,                       // description 先用全 id（4.0 车包无独立 description 字段）
 						"",                          // wikipediaArticle
 						res.color,
-						0.0F,                        // riderOffset（4.0 legacyRiderOffset 未接）
+						(float) res.legacyRiderOffset, // [0.28] 4.0 车包的 3.x 骑乘高度回退字段
 						0.0F,                        // riderOffsetDismounting
 						(float) res.bogie1Position,  // bogiePosition
 						res.hasGangway1 && res.hasGangway2 ? false : false, // isJacobsBogie（4.0 无对应概念）
