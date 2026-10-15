@@ -44,6 +44,9 @@ public final class BveTrainSound extends TrainSoundBase {
 
 	private static final Map<String, BveSoundConfig> CFG_CACHE = new ConcurrentHashMap<>();
 
+	/** 反射/宿主均不可达时的缺省速度基准（米/tick，≈40 km/h） */
+	private static final double DEFAULT_SPEED_M_PER_TICK = 0.55;
+
 	private BveTrainSound(String soundBase, String cfgFolder) {
 		this.soundBase = soundBase;
 		this.cfgFolder = cfgFolder;
@@ -64,7 +67,7 @@ public final class BveTrainSound extends TrainSoundBase {
 		return CFG_CACHE.computeIfAbsent(soundBase, k -> load());
 	}
 
-/** [0.9] 宿主列车实时速度（km/h）——TrainClient.speed 为米/tick */
+	/** [0.9] 宿主列车实时速度（km/h）——TrainClient.speed 为米/tick */
 	private double speedKmh() {
 		try {
 			if (hostTrain != null) {
@@ -74,7 +77,7 @@ public final class BveTrainSound extends TrainSoundBase {
 		} catch (final Throwable ignore) {
 			// 字段不可达时回退默认速度
 		}
-		return 40.0;
+		return DEFAULT_SPEED_M_PER_TICK * 72.0; // 缺省速度：米/tick × 20 tick/s × 3.6 s·km/h
 	}
 
 	/** [0.22] 反射统一走 HierarchyFieldFinder（speed/doorValue 两处重复模式提取） */
@@ -82,7 +85,7 @@ public final class BveTrainSound extends TrainSoundBase {
 		try {
 			return mtrnext.util.HierarchyFieldFinder.find(train, "speed").getDouble(train);
 		} catch (final Throwable t) {
-			return 0.55; // ≈40km/h 的米/tick 基准
+			return DEFAULT_SPEED_M_PER_TICK; // ≈40km/h 的米/tick 基准
 		}
 	}
 
