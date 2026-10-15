@@ -67,13 +67,14 @@ public final class FormationPreviewRenderer {
 		}
 	}
 
+	/** [0.30] winding 与主渲染器同步（从外部看逆时针；east 交换对角） */
 	private static void drawBox(VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
 		final float y1 = -box.y2, y2 = -box.y1;
-		if (box.uvDown != null) face(vc, pose, box.x1, y2, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz, box.uvDown);
+		if (box.uvDown != null) face(vc, pose, box.x1, y2, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x2, y2, box.z1 + dz, box.x1, y2, box.z1 + dz, box.uvDown);
 		if (box.uvUp != null) face(vc, pose, box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x1, y1, box.z2 + dz, box.uvUp);
-		if (box.uvNorth != null) face(vc, pose, box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x1, y2, box.z1 + dz, box.uvNorth);
+		if (box.uvNorth != null) face(vc, pose, box.x1, y2, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x1, y1, box.z1 + dz, box.uvNorth);
 		if (box.uvSouth != null) face(vc, pose, box.x1, y1, box.z2 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz, box.uvSouth);
-		if (box.uvEast != null) face(vc, pose, box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x2, y2, box.z1 + dz, box.uvEast);
+		if (box.uvEast != null) face(vc, pose, box.x2, y1, box.z2 + dz, box.x2, y1, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y2, box.z2 + dz, box.uvEast);
 		if (box.uvWest != null) face(vc, pose, box.x1, y1, box.z1 + dz, box.x1, y1, box.z2 + dz, box.x1, y2, box.z2 + dz, box.x1, y2, box.z1 + dz, box.uvWest);
 	}
 
