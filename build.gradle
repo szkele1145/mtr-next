@@ -74,9 +74,25 @@ sourceSets {
 			srcDir 'fabric/src/main/resources'
 		}
 	}
+	test {
+		java {
+			srcDir 'fabric/src/test/java'
+		}
+	}
 }
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = "UTF-8"
 	options.release = 17
+}
+
+// [0.31] 解析层离线自测：不依赖 JUnit / 不启动客户端，
+// 直接跑 fabric/src/test/java/mtrnext/ParserSelfTest。
+// 覆盖 docs/client-verification-boundary.md 里唯一可无头回归的部分：
+// sound.cfg 解析、csv 调速表插值、编组连接面规则。
+tasks.register('parserSelfTest', JavaExec) {
+	group = 'verification'
+	description = '离线解析层自测（sound.cfg / 调速表 / 编组规则）'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'mtrnext.ParserSelfTest'
 }

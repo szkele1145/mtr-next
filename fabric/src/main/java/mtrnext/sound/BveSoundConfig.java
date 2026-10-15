@@ -114,6 +114,13 @@ public final class BveSoundConfig {
 	/**
 	 * 解析 csv 调速表：首行标记行跳过，第二行 # 列头跳过，
 	 * 之后每行 [速度, 档0值, 档1值, ...]（空=0=不播）。
+	 * <p>
+	 * [0.31 修复] 必须用 {@code split(",", -1)}：Java 的 split 默认丢弃
+	 * <b>尾部空串</b>，而 BVE 表大量使用尾部空单元格（{@code 3.2,1,,}）。
+	 * 旧写法下 {@code 0,,,,}（该速度全档不播）会被解析成长度 1 的数组，
+	 * 随后被 sampleTable 的 {@code row.length <= motorIndex} 跳过，
+	 * 导致 0~3.2 km/h 区间错误沿用下一个速度点的档位音量。
+	 * 保留空串后行长度恒等于列数，语义才正确。
 	 */
 	public static List<double[]> parseTable(java.util.List<String> lines) {
 		final List<double[]> out = new ArrayList<>();
@@ -122,7 +129,7 @@ public final class BveSoundConfig {
 			if (line.isEmpty() || line.startsWith("bvets") || line.startsWith("#")) {
 				continue;
 			}
-			final String[] parts = line.split(",");
+			final String[] parts = line.split(",", -1);
 			final double[] row = new double[parts.length];
 			for (int i = 0; i < parts.length; i++) {
 				final String p = parts[i].trim();
