@@ -138,18 +138,21 @@ public final class BveTrainSound extends TrainSoundBase {
 
 	@Override
 	public void playNearestCar(Level world, BlockPos pos, int carNumber) {
-		playMotor(world, pos);
-		playBrakeRelease(world, pos); // [0.16] 低速缓解音
-		playAmbient(world, pos);      // [0.17] Run/Flange/Noise 环境音
-		tickDoorCloseEdge(world, pos); // [0.20] 关门沿检测
+		// [0.24] 每 tick 单次 config() 查询下传（此前 4 段各自查缓存 = 4 次 hash）
+		final BveSoundConfig cfg = config();
+		playMotor(world, pos, cfg);
+		playBrakeRelease(world, pos, cfg);  // [0.16] 低速缓解音
+		playAmbient(world, pos, cfg);       // [0.17] Run/Flange/Noise 环境音
+		tickDoorCloseEdge(world, pos, cfg); // [0.20] 关门沿检测
 	}
 
 	@Override
 	public void playAllCars(Level world, BlockPos pos, int unused) {
-		playMotor(world, pos);
-		playBrakeRelease(world, pos);
-		playAmbient(world, pos);
-		tickDoorCloseEdge(world, pos);
+		final BveSoundConfig cfg = config();
+		playMotor(world, pos, cfg);
+		playBrakeRelease(world, pos, cfg);
+		playAmbient(world, pos, cfg);
+		tickDoorCloseEdge(world, pos, cfg);
 	}
 
 	@Override
@@ -166,8 +169,7 @@ public final class BveTrainSound extends TrainSoundBase {
 	 * 字段做真实关门信号——开门时 doorValue 递增，关门时递减）。
 	 * 挂在 playAllCarsDoorOpening 之外的每个播放回调里采样（tick 级）。
 	 */
-	private void tickDoorCloseEdge(Level world, BlockPos pos) {
-		final BveSoundConfig cfg = config();
+	private void tickDoorCloseEdge(Level world, BlockPos pos, BveSoundConfig cfg) {
 		if (cfg.doorClose.isEmpty() || hostTrain == null) {
 			return;
 		}
@@ -185,9 +187,8 @@ public final class BveTrainSound extends TrainSoundBase {
 		}
 	}
 
-	/** [0.9] 实时速度驱动：查表取 pitch/vol 播 motor 档位 1 */
-	private void playMotor(Level world, BlockPos pos) {
-		final BveSoundConfig cfg = config();
+	/** [0.24] cfg 由调用方单次取好后传入（每 tick 1 次缓存查询替代原 4 次） */
+	private void playMotor(Level world, BlockPos pos, BveSoundConfig cfg) {
 		if (cfg.motor.isEmpty()) {
 			return;
 		}
@@ -217,9 +218,8 @@ public final class BveTrainSound extends TrainSoundBase {
 		}
 	}
 
-	/** [0.16] 低速缓解音：速度 < 5km/h 且配置有 BcReleaseFull 时播（制动缓解排气） */
-	private void playBrakeRelease(Level world, BlockPos pos) {
-		final BveSoundConfig cfg = config();
+	/** [0.24] cfg 传入版：低速缓解音（<5km/h 播 BcReleaseFull） */
+	private void playBrakeRelease(Level world, BlockPos pos, BveSoundConfig cfg) {
 		if (cfg.brakeReleaseFull.isEmpty() || speedKmh() > 5.0) {
 			return;
 		}
@@ -232,8 +232,7 @@ public final class BveTrainSound extends TrainSoundBase {
 	 * 0.17 的曲线检测用简化阈值——YMTR 侧线数据的曲线状态不可直接取
 	 * （TrainClient 无曲线字段），完整版需 hook Rail 几何，0.18 评估。
 	 */
-	private void playAmbient(Level world, BlockPos pos) {
-		final BveSoundConfig cfg = config();
+	private void playAmbient(Level world, BlockPos pos, BveSoundConfig cfg) {
 		final double speed = speedKmh();
 
 		// Run：速度归一化 pitch（0.8~1.4 随 40km/h 线性）
