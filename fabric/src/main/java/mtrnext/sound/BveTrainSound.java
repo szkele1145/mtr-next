@@ -140,25 +140,25 @@ public final class BveTrainSound extends TrainSoundBase {
 
 	@Override
 	public void playNearestCar(Level world, BlockPos pos, int carNumber) {
-		// [0.24] 每 tick 单次 config() 查询下传（此前 4 段各自查缓存 = 4 次 hash）
+		// [0.26] 回调级单次取 speed（此前 3 个速度消费段各自反射取速 = 3 次）
 		final BveSoundConfig cfg = config();
-		playMotor(world, pos, cfg);
-		playBrakeRelease(world, pos, cfg);  // [0.16] 低速缓解音
-		playAmbient(world, pos, cfg);       // [0.17] Run/Flange/Noise 环境音
-		tickDoorCloseEdge(world, pos, cfg); // [0.20] 关门沿检测
-		tickDepartureEdge(world, pos, cfg); // [0.25] 发车排气沿
-		tickEmergencyBrake(world, pos, cfg); // [0.25] 紧急制动检测
+		final double speed = speedKmh();
+		playMotor(world, pos, cfg, speed);
+		playBrakeRelease(world, pos, cfg, speed);  // [0.16] 低速缓解音
+		playAmbient(world, pos, cfg, speed);       // [0.17] Run/Flange/Noise 环境音
+		tickDoorCloseEdge(world, pos, cfg);        // [0.20] 关门沿检测
+		tickSpeedEdges(world, pos, cfg, speed);    // [0.25→0.26] 发车排气+紧急制动合并为单一边沿方法
 	}
 
 	@Override
 	public void playAllCars(Level world, BlockPos pos, int unused) {
 		final BveSoundConfig cfg = config();
-		playMotor(world, pos, cfg);
-		playBrakeRelease(world, pos, cfg);
-		playAmbient(world, pos, cfg);
+		final double speed = speedKmh();
+		playMotor(world, pos, cfg, speed);
+		playBrakeRelease(world, pos, cfg, speed);
+		playAmbient(world, pos, cfg, speed);
 		tickDoorCloseEdge(world, pos, cfg);
-		tickDepartureEdge(world, pos, cfg);
-		tickEmergencyBrake(world, pos, cfg);
+		tickSpeedEdges(world, pos, cfg, speed);
 	}
 
 	@Override
@@ -193,12 +193,11 @@ public final class BveTrainSound extends TrainSoundBase {
 		}
 	}
 
-	/** [0.24] cfg 由调用方单次取好后传入（每 tick 1 次缓存查询替代原 4 次） */
-	private void playMotor(Level world, BlockPos pos, BveSoundConfig cfg) {
+	/** [0.26] cfg+speed 传入版：实时速度驱动 motor/brake 档位 */
+	private void playMotor(Level world, BlockPos pos, BveSoundConfig cfg, double speed) {
 		if (cfg.motor.isEmpty()) {
 			return;
 		}
-		final double speed = speedKmh();
 		final float pitch = (float) Math.max(0.5,
 				BveSoundConfig.sampleTable(cfg.powerFreqTable, speed, 1));
 		final float vol = (float) Math.max(0.1,
@@ -208,8 +207,7 @@ public final class BveTrainSound extends TrainSoundBase {
 			play(world, pos, clip, vol, pitch);
 		}
 
-		// [0.16] Brake 段接线：制动调速表采样（速度 > 表内"再生制动截止"
-		// 时段播 brake 档位音；近零速播 BcReleaseFull 排气缓解音）
+		// [0.16] Brake 段：制动调速表采样
 		if (!cfg.brakeFreqTable.isEmpty()) {
 			final float bPitch = (float) Math.max(0.5,
 					BveSoundConfig.sampleTable(cfg.brakeFreqTable, speed, 1));
@@ -224,51 +222,34 @@ public final class BveTrainSound extends TrainSoundBase {
 		}
 	}
 
-	/** [0.24] cfg 传入版：低速缓解音（<5km/h 播 BcReleaseFull） */
-	private void playBrakeRelease(Level world, BlockPos pos, BveSoundConfig cfg) {
-		if (cfg.brakeReleaseFull.isEmpty() || speedKmh() > 5.0) {
+	/** [0.26] cfg+speed 传入版：低速缓解音 */
+	private void playBrakeRelease(Level world, BlockPos pos, BveSoundConfig cfg, double speed) {
+		if (cfg.brakeReleaseFull.isEmpty() || speed > 5.0) {
 			return;
 		}
 		play(world, pos, cfg.brakeReleaseFull, 0.9F, 1.0F);
 	}
 
 	/**
-	 * [0.25] BcReleaseHigh：发车排气音 — speed 由 <2km/h 进入 >2km/h 的
-	 * 起动沿（速度边沿检测，与 0.20 关门沿同模式）。
+	 * [0.26] 速度边沿合并：发车排气（静止→起动沿）+ 紧急制动（单 tick 降速 >3km/h）
+	 * 共享 lastSpeedKmh 且单次取速——0.25 的两个独立方法各自反射取速已并。
 	 */
-	private void tickDepartureEdge(Level world, BlockPos pos, BveSoundConfig cfg) {
-		if (cfg.brakeReleaseHigh.isEmpty()) {
-			return;
-		}
-		final double speed = speedKmh();
-		if (lastSpeedKmh >= 0 && lastSpeedKmh < 2.0 && speed >= 2.0) {
-			// 静止→起动沿：发车排气
-			play(world, pos, cfg.brakeReleaseHigh, 0.8F, 1.0F);
+	private void tickSpeedEdges(Level world, BlockPos pos, BveSoundConfig cfg, double speed) {
+		if (lastSpeedKmh >= 0) {
+			// 发车排气沿
+			if (!cfg.brakeReleaseHigh.isEmpty() && lastSpeedKmh < 2.0 && speed >= 2.0) {
+				play(world, pos, cfg.brakeReleaseHigh, 0.8F, 1.0F);
+			}
+			// 紧急制动沿
+			if (!cfg.emergency.isEmpty() && speed < lastSpeedKmh - 3.0) {
+				play(world, pos, cfg.emergency, 1.0F, 1.0F);
+			}
 		}
 		lastSpeedKmh = speed;
 	}
 
-	/** [0.25] Emergency（紧急制动）— 速度边沿：急减速（-3km/h/tick 以上）触发 */
-	private void tickEmergencyBrake(Level world, BlockPos pos, BveSoundConfig cfg) {
-		if (cfg.emergency.isEmpty()) {
-			return;
-		}
-		final double speed = speedKmh();
-		if (lastSpeedKmh >= 0 && speed < lastSpeedKmh - 3.0) {
-			// 单 tick 降速 >3km/h = 紧急制动
-			play(world, pos, cfg.emergency, 1.0F, 1.0F);
-		}
-		// lastSpeedKmh 的更新由 tickDepartureEdge 统一做（两者同 tick 只更新一次）
-	}
-
-	/**
-	 * [0.17] 环境音组：Run（行走音，速度相关 pitch）+ Flange（曲线音，
-	 * 简化为速度 >30km/h 触发）+ Noise（常驻底噪）。
-	 * 0.17 的曲线检测用简化阈值——YMTR 侧线数据的曲线状态不可直接取
-	 * （TrainClient 无曲线字段），完整版需 hook Rail 几何，0.18 评估。
-	 */
-	private void playAmbient(Level world, BlockPos pos, BveSoundConfig cfg) {
-		final double speed = speedKmh();
+	/** [0.26] cfg+speed 传入版：环境音组（Run/Flange/Noise） */
+	private void playAmbient(Level world, BlockPos pos, BveSoundConfig cfg, double speed) {
 
 		// Run：速度归一化 pitch（0.8~1.4 随 40km/h 线性）
 		if (!cfg.run.isEmpty()) {
