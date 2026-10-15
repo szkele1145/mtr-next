@@ -56,19 +56,39 @@ public final class VehiclePackLoader {
 			return;
 		}
 		for (Resource entry : entries) {
+			// [0.32] 逐资源包隔离：一个坏包不影响其它包
 			try (InputStreamReader reader = new InputStreamReader(entry.open(), StandardCharsets.UTF_8)) {
 				final JsonObject root = GSON.fromJson(reader, JsonObject.class);
 				final JsonArray vehicles = root != null && root.has("vehicles") ? root.getAsJsonArray("vehicles") : null;
 				if (vehicles == null || vehicles.size() == 0) {
 					continue; // 3.2 格式或空包 — 不接管
 				}
+				int loaded = 0;
 				for (JsonElement el : vehicles) {
-					final VehicleResource res = VehicleResource.fromJson(el.getAsJsonObject(), manager);
-					VEHICLES.put(res.id, res);
+					// [0.32] 逐车隔离：单个畸形车辆定义只跳过它自己。
+					// 旧写法把整个 for 放在同一个 try 内，一辆坏车会让同包后续
+					// 所有车辆一起丢失，且只在日志留一行 error——车包作者很难定位。
+					try {
+						if (!el.isJsonObject()) {
+							MtrNext.LOGGER.warn("Skipping non-object vehicle entry in {}", entry.sourcePackId());
+							continue;
+						}
+						final VehicleResource res = VehicleResource.fromJson(el.getAsJsonObject(), manager);
+						if (res == null) {
+							// id 缺失/空白：注册表用它作唯一键，静默注册会塌成同一槽位
+							MtrNext.LOGGER.warn("Skipping vehicle without a usable \"id\" in {}", entry.sourcePackId());
+							continue;
+						}
+						VEHICLES.put(res.id, res);
+						loaded++;
+					} catch (Exception e) {
+						MtrNext.LOGGER.warn("Skipping malformed vehicle in {}: {}", entry.sourcePackId(), e.toString());
+					}
 				}
-				MtrNext.LOGGER.info("Loaded 4.0-format vehicle pack: {} vehicles", vehicles.size());
+				MtrNext.LOGGER.info("Loaded 4.0-format vehicle pack {}: {}/{} vehicles",
+						entry.sourcePackId(), loaded, vehicles.size());
 			} catch (Exception e) {
-				MtrNext.LOGGER.error("Failed to parse vehicle pack", e);
+				MtrNext.LOGGER.error("Failed to parse vehicle pack {}", entry.sourcePackId(), e);
 			}
 		}
 		MtrNext.LOGGER.info("MTR-Next vehicle registry: {} vehicles from 4.0 packs", VEHICLES.size());

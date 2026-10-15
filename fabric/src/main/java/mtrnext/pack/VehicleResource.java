@@ -87,7 +87,28 @@ public final class VehicleResource {
 		this.positionDefinitionNames = posDefs;
 	}
 
-	static VehicleResource fromJson(JsonObject o, ResourceManager manager) {
+	/**
+	 * [0.32] 解析单个 4.x 车辆定义。
+	 * <p>
+	 * {@code manager} 允许为 {@code null}：此时所有资源引用
+	 * （bbmodel/texture/positionDefinitions）被跳过，只解析纯数据字段，
+	 * 因此本方法可脱离客户端离线回归（见 {@code ParserSelfTest}）。
+	 * <p>
+	 * {@code id} 缺失或为空白时返回 {@code null}——4.x 车包里 {@code id} 是
+	 * 唯一键，没有它注册表会塌成同一个 "unknown" 槽位，多辆畸形车互相覆盖，
+	 * 且 GUI 里显示为不可用条目。宁可丢弃并告警，也不要静默注册坏数据。
+	 * <p>
+	 * 数值字段类型不合法（如 {@code "length": "abc"}）会抛出
+	 * {@link NumberFormatException}，由调用方按单车隔离处理。
+	 */
+	public static VehicleResource fromJson(JsonObject o, ResourceManager manager) {
+		if (o == null) {
+			return null;
+		}
+		final String id = str(o, "id", "");
+		if (id.isBlank()) {
+			return null;
+		}
 		final List<ModelLayer> models = parseLayers(o, "models", manager);
 		final List<ModelLayer> bogie1 = parseLayers(o, "bogie1Models", manager);
 		final List<ModelLayer> bogie2 = parseLayers(o, "bogie2Models", manager);
@@ -96,8 +117,8 @@ public final class VehicleResource {
 			posDefs.addAll(layer.positionDefinitionNames);
 		}
 		return new VehicleResource(
-				str(o, "id", "unknown"),
-				str(o, "name", str(o, "id", "unknown")),
+				id,
+				str(o, "name", id),
 				parseColor(str(o, "color", "FFFFFF")),
 				str(o, "transportMode", "TRAIN"),
 				num(o, "length", 12.0),
@@ -115,20 +136,65 @@ public final class VehicleResource {
 				models, bogie1, bogie2, posDefs);
 	}
 
+	/**
+	 * [0.32] 解析模型层数组。
+	 * <p>
+	 * 旧写法直接对每个元素调 {@code getAsJsonObject()}：数组里只要出现
+	 * 一个非对象元素（串、数字、null），就会抛 {@code IllegalStateException}
+	 * 并让<b>整辆车</b>报废。现在畸形元素按层跳过——一辆车里丢一层远比
+	 * 丢整辆车合理。
+	 * <p>
+	 * 另修一处不一致：空/非数组路径此前返回可变 {@code ArrayList}，成功路径
+	 * 返回 {@code unmodifiableList}。现在两条路径都返回不可变表。
+	 */
 	private static List<ModelLayer> parseLayers(JsonObject o, String key, ResourceManager manager) {
-		final List<ModelLayer> out = new ArrayList<>();
 		if (!o.has(key) || !o.get(key).isJsonArray()) {
-			return out;
+			return Collections.emptyList();
 		}
+		final List<ModelLayer> out = new ArrayList<>();
 		for (JsonElement el : o.getAsJsonArray(key)) {
+			if (el == null || !el.isJsonObject()) {
+				MtrNext.LOGGER.warn("Skipping malformed model layer in \"{}\"", key);
+				continue;
+			}
 			out.add(ModelLayer.fromJson(el.getAsJsonObject(), manager));
 		}
 		return Collections.unmodifiableList(out);
 	}
 
+	/**
+	 * [0.32] 解析 4.x 车辆颜色（十六进制 RRGGBB，可选 {@code #} 前缀）。
+	 * <p>
+	 * 旧写法 {@code (int) Long.parseLong(hex, 16)} 有两个真实缺陷：
+	 * <ol>
+	 *   <li>不校验位宽——{@code "FFFFFFFFF"}（9 位）能解析成功再被强转 int
+	 *       截断，得到与作者意图无关的颜色；</li>
+	 *   <li>不裁剪空白与前缀——{@code " #FF8800 "} / {@code "#FF8800"}
+	 *       在合法车包里很常见，却全部静默回退成白色。</li>
+	 * </ol>
+	 * 现在只接受 1~6 位十六进制，其余一律回退 {@code 0xFFFFFF}
+	 * （调用方 {@code | 0xFF000000} 后为不透明白，视觉上安全）。
+	 */
 	private static int parseColor(String hex) {
+		if (hex == null) {
+			return 0xFFFFFF;
+		}
+		String s = hex.trim();
+		if (s.startsWith("#")) {
+			s = s.substring(1);
+		}
+		if (s.isEmpty() || s.length() > 6) {
+			return 0xFFFFFF;
+		}
+		for (int i = 0; i < s.length(); i++) {
+			final char c = s.charAt(i);
+			final boolean isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+			if (!isHex) {
+				return 0xFFFFFF;
+			}
+		}
 		try {
-			return (int) Long.parseLong(hex, 16);
+			return Integer.parseInt(s, 16);
 		} catch (Exception e) {
 			return 0xFFFFFF;
 		}

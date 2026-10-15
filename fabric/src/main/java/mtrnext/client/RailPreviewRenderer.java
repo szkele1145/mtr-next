@@ -32,7 +32,7 @@ public final class RailPreviewRenderer {
 		}
 
 		// [0.3] 曲线精确预览：优先用 YMTR 同源几何采样，失败回退直线
-		final Vec3[] curve = RailPreviewGeometry.sampleCurve(mc, first, second);
+		final Vec3[] curve = RailPreviewGeometry.sampleCurve(first, second);
 		final int segments = curve != null ? curve.length - 1 : SEGMENTS;
 
 		final com.mojang.blaze3d.vertex.Tesselator tesselator = com.mojang.blaze3d.vertex.Tesselator.getInstance();

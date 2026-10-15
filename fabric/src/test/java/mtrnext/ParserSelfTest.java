@@ -29,11 +29,121 @@ public final class ParserSelfTest {
 		testSoundCfg();
 		testSpeedTable();
 		testFormationRules();
+		testVehicleResource();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
 			System.exit(1);
 		}
+	}
+
+	/**
+	 * [0.32] 4.0 车包车辆定义解析。
+	 * <p>
+	 * {@code VehicleResource.fromJson(o, null)} 在 manager==null 时跳过所有
+	 * 资源引用（bbmodel/texture/positionDefinitions），只解析纯数据字段——
+	 * 因此整条 4.x 车辆数据面可以脱离客户端离线回归。
+	 */
+	private static void testVehicleResource() {
+		System.out.println("[VehicleResource.fromJson]");
+
+		// --- ERIDU-DG1000A 风格的真实结构（含多模型层 + 连接面语义）---
+		final com.google.gson.JsonObject full = json("""
+				{ "id": "ERIDU_DG1000A", "name": "ERIDU DG1000A", "color": "D67C00",
+				  "transportMode": "TRAIN", "length": 12.0, "width": 3.0,
+				  "bogie1Position": -4.0, "bogie2Position": 4.0,
+				  "couplingPadding1": 0.5, "couplingPadding2": -0.5,
+				  "hasGangway1": false, "hasGangway2": true,
+				  "hasBarrier1": false, "hasBarrier2": true,
+				  "bveSoundBaseResource": "mtr:eridu",
+				  "legacyRiderOffset": 0.25,
+				  "models": [
+				    { "modelResource": "mtr:body.bbmodel", "textureResource": "mtr:body.png",
+				      "modelPropertiesResource": "mtr:properties_1.json", "flipTextureV": false },
+				    { "modelResource": "mtr:inner.bbmodel", "textureResource": "mtr:inner.png",
+				      "modelPropertiesResource": "mtr:properties_2.json" }
+				  ],
+				  "bogie1Models": [ { "modelResource": "mtr:b1.bbmodel" } ],
+				  "bogie2Models": [ { "modelResource": "mtr:b2.bbmodel" } ] }
+				""");
+		final mtrnext.pack.VehicleResource v = mtrnext.pack.VehicleResource.fromJson(full, null);
+		check("正常车定义解析成功", v != null);
+		check("id 落位", v != null && "ERIDU_DG1000A".equals(v.id));
+		check("name 落位", v != null && "ERIDU DG1000A".equals(v.name));
+		check("color D67C00 -> 0xD67C00", v != null && v.color == 0xD67C00);
+		check("transportMode TRAIN", v != null && "TRAIN".equals(v.transportMode));
+		check("length/width", v != null && v.length == 12.0 && v.width == 3.0);
+		check("bogie1/2Position 含负值", v != null && v.bogie1Position == -4.0 && v.bogie2Position == 4.0);
+		check("couplingPadding 含负值", v != null && v.couplingPadding1 == 0.5 && v.couplingPadding2 == -0.5);
+		check("连接面 gangway 1=false 2=true", v != null && !v.hasGangway1 && v.hasGangway2);
+		check("连接面 barrier 1=false 2=true", v != null && !v.hasBarrier1 && v.hasBarrier2);
+		check("bveSoundBaseResource", v != null && "mtr:eridu".equals(v.bveSoundBaseResource));
+		check("legacyRiderOffset", v != null && v.legacyRiderOffset == 0.25);
+		check("models 两层", v != null && v.models.size() == 2);
+		check("模型层字段落位", v != null
+				&& "mtr:body.bbmodel".equals(v.models.get(0).modelResource)
+				&& "mtr:body.png".equals(v.models.get(0).textureResource)
+				&& "mtr:properties_1.json".equals(v.models.get(0).propertiesResource));
+		check("flipTextureV 显式 false", v != null && !v.models.get(0).flipTextureV);
+		check("flipTextureV 缺省 true", v != null && v.models.get(1).flipTextureV);
+		check("bogie1/bogie2Models 各自 1 层", v != null
+				&& v.bogie1Models.size() == 1 && v.bogie2Models.size() == 1);
+		check("manager=null 时 positionDefinitions 跳过(空表)", v != null && v.positionDefinitionNames.isEmpty());
+
+		// --- [0.32] id 是注册表唯一键：缺失/空白必须拒绝而非塌成 "unknown" ---
+		check("缺 id -> null", mtrnext.pack.VehicleResource.fromJson(json("{\"name\":\"x\"}"), null) == null);
+		check("id 空白 -> null", mtrnext.pack.VehicleResource.fromJson(json("{\"id\":\"   \"}"), null) == null);
+		check("id 空串 -> null", mtrnext.pack.VehicleResource.fromJson(json("{\"id\":\"\"}"), null) == null);
+		check("null 输入 -> null", mtrnext.pack.VehicleResource.fromJson(null, null) == null);
+
+		// --- 缺省值语义 ---
+		final mtrnext.pack.VehicleResource min = mtrnext.pack.VehicleResource.fromJson(
+				json("{\"id\":\"MIN\"}"), null);
+		check("最小定义 name 回退为 id", min != null && "MIN".equals(min.name));
+		check("最小定义 color 缺省 0xFFFFFF", min != null && min.color == 0xFFFFFF);
+		check("最小定义 transportMode 缺省 TRAIN", min != null && "TRAIN".equals(min.transportMode));
+		check("最小定义 length 缺省 12", min != null && min.length == 12.0);
+		check("最小定义 bogie 缺省 ±4", min != null && min.bogie1Position == -4.0 && min.bogie2Position == 4.0);
+		check("最小定义连接面缺省全 false", min != null
+				&& !min.hasGangway1 && !min.hasGangway2 && !min.hasBarrier1 && !min.hasBarrier2);
+		check("最小定义 models 为空表(非 null)", min != null && min.models.isEmpty());
+		check("models 非数组 -> 空表", mtrnext.pack.VehicleResource.fromJson(
+				json("{\"id\":\"A\",\"models\":\"oops\"}"), null).models.isEmpty());
+		// [0.32] 数组内非对象元素按层跳过（旧写法会让整辆车报废）
+		final mtrnext.pack.VehicleResource mixed = mtrnext.pack.VehicleResource.fromJson(json(
+				"{\"id\":\"A\",\"models\":[\"junk\",{\"modelResource\":\"mtr:ok.bbmodel\"},42,null]}"), null);
+		check("models 含 3 个畸形元素 -> 保留 1 个合法层", mixed != null && mixed.models.size() == 1);
+		check("保留的是合法层", mixed != null
+				&& "mtr:ok.bbmodel".equals(mixed.models.get(0).modelResource));
+		check("models 全畸形 -> 空表且车仍可用", mtrnext.pack.VehicleResource.fromJson(
+				json("{\"id\":\"A\",\"models\":[\"x\",null]}"), null).models.isEmpty());
+
+		// --- [0.32] color 位宽/前缀/非法字符：此前 9 位会静默截断成诡异颜色 ---
+		check("color '#FF8800' 前缀容错", colorOf("{\"id\":\"C\",\"color\":\"#FF8800\"}") == 0xFF8800);
+		check("color ' ff8800 ' 空白容错", colorOf("{\"id\":\"C\",\"color\":\" ff8800 \"}") == 0xFF8800);
+		check("color 9 位 'FFFFFFFFF' -> 回退白", colorOf("{\"id\":\"C\",\"color\":\"FFFFFFFFF\"}") == 0xFFFFFF);
+		check("color 非十六进制 'ZZZ' -> 回退白", colorOf("{\"id\":\"C\",\"color\":\"ZZZ\"}") == 0xFFFFFF);
+		check("color 空串 -> 回退白", colorOf("{\"id\":\"C\",\"color\":\"\"}") == 0xFFFFFF);
+		check("color '00' -> 0(纯黑, 非回退)", colorOf("{\"id\":\"C\",\"color\":\"00\"}") == 0x0);
+
+		// --- 数值字段畸形：文档化行为 = 抛 NumberFormatException（由调用方按车隔离）---
+		boolean threw = false;
+		try {
+			mtrnext.pack.VehicleResource.fromJson(json("{\"id\":\"BAD\",\"length\":\"abc\"}"), null);
+		} catch (NumberFormatException e) {
+			threw = true;
+		}
+		check("length='abc' 抛 NumberFormatException(交调用方隔离)", threw);
+	}
+
+	/** 取 color 字段的解析结果（非法定义返回哨兵 -1） */
+	private static int colorOf(String vehicleJson) {
+		final mtrnext.pack.VehicleResource r = mtrnext.pack.VehicleResource.fromJson(json(vehicleJson), null);
+		return r == null ? -1 : r.color;
+	}
+
+	private static com.google.gson.JsonObject json(String s) {
+		return com.google.gson.JsonParser.parseString(s).getAsJsonObject();
 	}
 
 	/** sound.cfg 的 INI 子集解析：七段全部落位 + 空值语义 */
