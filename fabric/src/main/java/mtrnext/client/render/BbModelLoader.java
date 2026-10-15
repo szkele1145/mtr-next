@@ -5,39 +5,30 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import mtrnext.MtrNext;
-import net.minecraft.client.model.geom.ModelPart;
-import net.minecraft.client.model.geom.PartPose;
-import net.minecraft.client.model.geom.builders.CubeListBuilder;
-import net.minecraft.client.model.geom.builders.LayerDefinition;
-import net.minecraft.client.model.geom.builders.MeshDefinition;
-import net.minecraft.client.model.geom.builders.PartDefinition;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * [4.0 车包渲染桥 1/2] bbmodel（BlockBench JSON）解析为 MC 原生 ModelPart。
+ * [0.29 重构] bbmodel 解析器——自定义盒数据结构（per-face UV 正确版）。
  * <p>
- * 实证（ERIDU-DG1000A 样本）：
- * <ul>
- *   <li>elements[]：标准 BlockBench 盒体——from/to（世界单位顶点）、
- *       rotation+origin（三轴旋转）、faces 六面 UV（resolution 24×24 基准）；</li>
- *   <li>faces 缺省面（无 uv 键）跳过该面绘制。</li>
- * </ul>
+ * 旧实现把 bbmodel 的每面 UV 塞进 MC CubeListBuilder 的整盒 texOffs 模型，
+ * 生成 6 个重叠盒且 UV 错位（docs/bbox-uv-flaw.md 完整分析）。正确方案：
+ * 保留 bbmodel 的原生语义——一个盒、六面、每面独立 UV——由渲染器逐面绘制。
  * <p>
- * [0.10] 门动画桥：element name 含 "door" 的部件以 door_ 前缀命名，
- * {@link #animateDoors} 按门开度平移它们（Z 向 0.75 格行程）。
+ * 产物 {@link BbBox} 列表直接给 BbModelTrainRenderer 的 quad 绘制路径。
+ * 门部件（name 含 door）单独标记，渲染时按门参数整体偏移。
  */
 public final class BbModelLoader {
 
-	private static final Map<String, MeshDefinition> CACHE = new ConcurrentHashMap<>();
-
-	/** [0.10] 门动画行程（格） */
-	private static final float DOOR_TRAVEL = 0.75F;
+	/** 已解析缓存：模型资源路径 → 盒列表 */
+	private static final Map<String, List<BbBox>> CACHE = new ConcurrentHashMap<>();
 
 	private BbModelLoader() {
 	}
@@ -46,21 +37,12 @@ public final class BbModelLoader {
 		CACHE.clear();
 	}
 
-	public static ModelPart bake(ResourceManager manager, String modelResource) {
-		final MeshDefinition mesh = CACHE.computeIfAbsent(modelResource, k -> parse(manager, k));
-		if (mesh == null) {
-			return null;
-		}
-		try {
-			final LayerDefinition layerDefs = LayerDefinition.create(mesh, 24, 24);
-			return layerDefs.bakeRoot();
-		} catch (final Throwable t) {
-			MtrNext.LOGGER.error("Failed to bake bbmodel {}", modelResource, t);
-			return null;
-		}
+	/** 解析并缓存 bbmodel 的盒列表（null=资源不存在/解析失败） */
+	public static List<BbBox> load(ResourceManager manager, String modelResource) {
+		return CACHE.computeIfAbsent(modelResource, k -> parse(manager, k));
 	}
 
-	private static MeshDefinition parse(ResourceManager manager, String modelResource) {
+	private static List<BbBox> parse(ResourceManager manager, String modelResource) {
 		try {
 			final ResourceLocation id = new ResourceLocation(modelResource);
 			if (!manager.getResource(id).isPresent()) {
@@ -70,7 +52,7 @@ public final class BbModelLoader {
 			try (InputStreamReader r = new InputStreamReader(
 					manager.getResource(id).get().open(), StandardCharsets.UTF_8)) {
 				final JsonObject root = JsonParser.parseReader(r).getAsJsonObject();
-				return buildMesh(root);
+				return buildBoxes(root);
 			}
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.error("Failed to parse bbmodel {}", modelResource, t);
@@ -78,120 +60,75 @@ public final class BbModelLoader {
 		}
 	}
 
-	private static MeshDefinition buildMesh(JsonObject root) {
-		final MeshDefinition mesh = new MeshDefinition();
-		final PartDefinition rootPart = mesh.getRoot();
-
+	private static List<BbBox> buildBoxes(JsonObject root) {
+		final List<BbBox> boxes = new ArrayList<>();
 		if (!root.has("elements") || !root.get("elements").isJsonArray()) {
-			return mesh;
+			return boxes;
 		}
-		int index = 0;
 		for (final JsonElement el : root.getAsJsonArray("elements")) {
 			final JsonObject element = el.getAsJsonObject();
-			final String name = str(element, "name", "el" + index);
-			// [0.10] 门部件识别：name 含 "door"（不区分大小写）→ door_ 前缀
-			final boolean isDoor = name.toLowerCase(java.util.Locale.ROOT).contains("door");
-			final CubeListBuilder cube = buildCube(element);
-			if (cube == null) {
-				index++;
-				continue;
+			final BbBox box = buildBox(element);
+			if (box != null) {
+				boxes.add(box);
 			}
-			final float[] rot = rotation(element);
-			final float[] origin = origin(element);
-			rootPart.addOrReplaceChild((isDoor ? "door_" : "el") + index, cube,
-					PartPose.offsetAndRotation(
-							-origin[0], origin[1], origin[2],
-							(float) Math.toRadians(rot[0]),
-							(float) Math.toRadians(rot[1]),
-							(float) Math.toRadians(rot[2])));
-			index++;
 		}
-		return mesh;
+		return boxes;
 	}
 
-	/**
-	 * [0.23] 门开度动画（渐进版 + 早终止）：O(256) 全量轮询 → 首个 miss 终止。
-	 * <p>
-	 * 通宵审查第二轮发现：getChild("door_" + i) 轮询 0..255 是每帧每车
-	 * O(256) 次名字查找（Map 取键+字符串拼接）。修复：bake 时把 door_
-	 * 部件的 index 列表存进 mesh 的附带表，animateDoors 只遍历真实门。
-	 */
-	private static final java.util.Map<String, java.util.List<Integer>> DOOR_INDEX_CACHE =
-			new java.util.concurrent.ConcurrentHashMap<>();
-
-	public static void animateDoors(ModelPart baked, boolean doorLeftOpen, boolean doorRightOpen, float delta) {
-		if (baked == null) {
-			return;
-		}
-		final boolean open = doorLeftOpen || doorRightOpen;
-		// 逐 index 试探改为：固定小范围轮询——门部件在 buildMesh 里按 element
-		// 顺序编号，实际车包门数 ≤ 16；256 上界保留但真实遍历在首个 miss 后终止
-		for (int i = 0; i < 256; i++) {
-			final ModelPart part = baked.getChild("door_" + i);
-			if (part == null) {
-				break; // [0.23] 门部件按 index 连续编号——首个 miss 即全部结束
-			}
-			DoorAnimator.tickBool(part, open, delta);
-		}
-	}
-
-	private static CubeListBuilder buildCube(JsonObject element) {
+	private static BbBox buildBox(JsonObject element) {
 		if (!element.has("from") || !element.has("to")) {
 			return null;
 		}
 		final JsonArray from = element.getAsJsonArray("from");
 		final JsonArray to = element.getAsJsonArray("to");
-		final float x1 = f(from, 0), y1 = f(from, 1), z1 = f(from, 2);
-		final float x2 = f(to, 0), y2 = f(to, 1), z2 = f(to, 2);
+		final String name = str(element, "name", "");
+		final boolean isDoor = name.toLowerCase(java.util.Locale.ROOT).contains("door");
 
-		final CubeListBuilder cube = CubeListBuilder.create();
-		boolean anyFace = false;
+		final BbBox box = new BbBox(isDoor);
+		box.x1 = f(from, 0);
+		box.y1 = f(from, 1);
+		box.z1 = f(from, 2);
+		box.x2 = f(to, 0);
+		box.y2 = f(to, 1);
+		box.z2 = f(to, 2);
+
+		// rotation + origin（BlockBench 三轴欧拉）
+		if (element.has("rotation")) {
+			final JsonArray rot = element.getAsJsonArray("rotation");
+			box.rotX = (float) Math.toRadians(f(rot, 0));
+			box.rotY = (float) Math.toRadians(f(rot, 1));
+			box.rotZ = (float) Math.toRadians(f(rot, 2));
+		}
+		if (element.has("origin")) {
+			final JsonArray origin = element.getAsJsonArray("origin");
+			box.originX = f(origin, 0);
+			box.originY = f(origin, 1);
+			box.originZ = f(origin, 2);
+		}
+
+		// 六面 UV（每面独立：u1,v1,u2,v2；缺面=不绘制）
 		if (element.has("faces") && element.get("faces").isJsonObject()) {
 			final JsonObject faces = element.getAsJsonObject("faces");
-			anyFace |= addFace(cube, faces, "down", x1, y2, z1, x2, y2, z2);
-			anyFace |= addFace(cube, faces, "up", x1, y1, z1, x2, y1, z2);
-			anyFace |= addFace(cube, faces, "north", x1, y1, z1, x2, y2, z1);
-			anyFace |= addFace(cube, faces, "south", x1, y1, z2, x2, y2, z2);
-			anyFace |= addFace(cube, faces, "east", x2, y1, z1, x2, y2, z2);
-			anyFace |= addFace(cube, faces, "west", x1, y1, z1, x1, y2, z2);
+			box.uvDown = readUv(faces, "down");
+			box.uvUp = readUv(faces, "up");
+			box.uvNorth = readUv(faces, "north");
+			box.uvSouth = readUv(faces, "south");
+			box.uvEast = readUv(faces, "east");
+			box.uvWest = readUv(faces, "west");
 		}
-		if (!anyFace) {
-			cube.addBox(x1, y1, z1, x2 - x1, y2 - y1, z2 - z1);
-		}
-		return cube;
+		return box;
 	}
 
-	private static boolean addFace(CubeListBuilder cube, JsonObject faces, String face,
-			float x1, float y1, float z1, float x2, float y2, float z2) {
+	private static float[] readUv(JsonObject faces, String face) {
 		if (!faces.has(face)) {
-			return false;
+			return null;
 		}
 		final JsonObject f = faces.getAsJsonObject(face);
 		if (!f.has("uv")) {
-			return false;
+			return null;
 		}
 		final JsonArray uv = f.getAsJsonArray("uv");
-		final float u1 = f(uv, 0), v1 = f(uv, 1);
-		// [0.9.5] UV 精度：Math.round 保最大精度（残余亚像素偏差在 24×24 贴图 <2%）
-		cube.texOffs(Math.round(u1), Math.round(v1)).addBox(x1, y1, z1, x2 - x1, y2 - y1, z2 - z1,
-				net.minecraft.client.model.geom.builders.CubeDeformation.NONE);
-		return true;
-	}
-
-	private static float[] rotation(JsonObject element) {
-		if (!element.has("rotation")) {
-			return new float[]{0, 0, 0};
-		}
-		final JsonArray r = element.getAsJsonArray("rotation");
-		return new float[]{f(r, 0), f(r, 1), f(r, 2)};
-	}
-
-	private static float[] origin(JsonObject element) {
-		if (!element.has("origin")) {
-			return new float[]{0, 0, 0};
-		}
-		final JsonArray o = element.getAsJsonArray("origin");
-		return new float[]{f(o, 0), f(o, 1), f(o, 2)};
+		return new float[]{f(uv, 0), f(uv, 1), f(uv, 2), f(uv, 3)};
 	}
 
 	private static float f(JsonArray a, int i) {
@@ -200,5 +137,27 @@ public final class BbModelLoader {
 
 	private static String str(JsonObject o, String key, String def) {
 		return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : def;
+	}
+
+	/** 兼容旧调用点的退化接口：不再做 MC bake */
+	@Deprecated
+	public static Object bake(ResourceManager manager, String modelResource) {
+		return load(manager, modelResource);
+	}
+
+	/**
+	 * bbmodel 盒（原生语义：一盒六面、每面独立 UV）。
+	 * 渲染器按面绘制，门盒整体偏移。
+	 */
+	public static final class BbBox {
+		public float x1, y1, z1, x2, y2, z2;
+		public float rotX, rotY, rotZ;
+		public float originX, originY, originZ;
+		public final boolean isDoor;
+		public float[] uvDown, uvUp, uvNorth, uvSouth, uvEast, uvWest;
+
+		BbBox(boolean isDoor) {
+			this.isDoor = isDoor;
+		}
 	}
 }

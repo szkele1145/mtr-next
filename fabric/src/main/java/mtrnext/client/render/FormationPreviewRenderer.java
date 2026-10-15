@@ -8,16 +8,17 @@ import mtrnext.formation.FormationStore;
 import mtrnext.pack.VehiclePackLoader;
 import mtrnext.pack.VehicleResource;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.resources.ResourceLocation;
+import org.joml.Matrix4f;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
- * [编组预览渲染] 在编组编辑屏里把当前编组的车辆 3D 排布画出来。
+ * [0.29 适配] 编组屏 3D 预览——bbmodel 自定义盒逐面绘制版。
  * <p>
- * 每车：ModelPart（bbmodel bake）平移到编组位（横向排开便于总览），
- * 方向翻转（头连头）用 Y 轴 180° 旋转。
+ * 旧实现经 ModelPart bake（per-face UV 缺陷）——与渲染器同步换到
+ * BbBox 直绘。预览无门动画（静态展示）。
  */
 public final class FormationPreviewRenderer {
 
@@ -39,9 +40,10 @@ public final class FormationPreviewRenderer {
 					carIndex++;
 					continue;
 				}
-				final VehicleResource.ModelLayer layer = res.models.get(0); // 第一层 = 车体
-				final ModelPart model = BbModelLoader.bake(Minecraft.getInstance().getResourceManager(), layer.modelResource);
-				if (model == null) {
+				final VehicleResource.ModelLayer layer = res.models.get(0);
+				final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
+						Minecraft.getInstance().getResourceManager(), layer.modelResource);
+				if (boxes == null || boxes.isEmpty()) {
 					carIndex++;
 					continue;
 				}
@@ -51,8 +53,11 @@ public final class FormationPreviewRenderer {
 				if (!car.forward) {
 					poseStack.mulPose(com.mojang.math.Axis.YP.rotationDegrees(180));
 				}
-				// ModelPart.render(PoseStack, VertexConsumer, light, overlay) — 1.20.1 四参签名
-				model.render(poseStack, vertexConsumer, 0xF000F0, 0);
+				final Matrix4f pose = poseStack.last().pose();
+				// 预览用已构造的 VertexConsumer（贴图取第一车）
+				for (final BbModelLoader.BbBox box : boxes) {
+					drawBox(vertexConsumer, pose, box, 0.0F);
+				}
 				poseStack.popPose();
 
 				carIndex++;
@@ -62,14 +67,24 @@ public final class FormationPreviewRenderer {
 		}
 	}
 
-	private static ResourceLocation texLocation(String resource) {
-		if (resource == null || resource.isEmpty()) {
-			return new ResourceLocation("minecraft", "textures/block/white_concrete.png");
-		}
-		final String[] parts = resource.split(":", 2);
-		return parts.length == 2
-				? new ResourceLocation(parts[0], parts[1])
-				: new ResourceLocation("minecraft", parts[0]);
+	private static void drawBox(VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
+		final float y1 = -box.y2, y2 = -box.y1;
+		if (box.uvDown != null) face(vc, pose, box.x1, y2, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz, box.uvDown);
+		if (box.uvUp != null) face(vc, pose, box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x1, y1, box.z2 + dz, box.uvUp);
+		if (box.uvNorth != null) face(vc, pose, box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x1, y2, box.z1 + dz, box.uvNorth);
+		if (box.uvSouth != null) face(vc, pose, box.x1, y1, box.z2 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz, box.uvSouth);
+		if (box.uvEast != null) face(vc, pose, box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x2, y2, box.z1 + dz, box.uvEast);
+		if (box.uvWest != null) face(vc, pose, box.x1, y1, box.z1 + dz, box.x1, y1, box.z2 + dz, box.x1, y2, box.z2 + dz, box.x1, y2, box.z1 + dz, box.uvWest);
+	}
+
+	private static void face(VertexConsumer vc, Matrix4f pose,
+			float ax, float ay, float az, float bx, float by, float bz,
+			float cx, float cy, float cz, float dx, float dy, float dz, float[] uv) {
+		final float u1 = uv[0] / 24.0F, v1 = uv[1] / 24.0F, u2 = uv[2] / 24.0F, v2 = uv[3] / 24.0F;
+		vc.vertex(pose, ax, ay, az).color(255, 255, 255, 255).uv(u1, v2).endVertex();
+		vc.vertex(pose, bx, by, bz).color(255, 255, 255, 255).uv(u2, v2).endVertex();
+		vc.vertex(pose, cx, cy, cz).color(255, 255, 255, 255).uv(u2, v1).endVertex();
+		vc.vertex(pose, dx, dy, dz).color(255, 255, 255, 255).uv(u1, v1).endVertex();
 	}
 
 	/** 供调用方取贴图（VertexConsumer 由调用方以正确贴图构造） */
@@ -77,9 +92,15 @@ public final class FormationPreviewRenderer {
 		if (formation != null && !formation.cars.isEmpty()) {
 			final VehicleResource res = VehiclePackLoader.getVehicle(formation.cars.get(0).vehicleId);
 			if (res != null && !res.models.isEmpty()) {
-				return texLocation(res.models.get(0).textureResource);
+				final String tex = res.models.get(0).textureResource;
+				if (tex != null && !tex.isEmpty()) {
+					final String[] parts = tex.split(":", 2);
+					return parts.length == 2
+							? new ResourceLocation(parts[0], parts[1])
+							: new ResourceLocation("minecraft", parts[0]);
+				}
 			}
 		}
-		return texLocation("");
+		return new ResourceLocation("minecraft", "textures/block/white_concrete.png");
 	}
 }

@@ -6,29 +6,30 @@ import mtrnext.MtrNext;
 import mtrnext.pack.VehiclePackLoader;
 import mtrnext.pack.VehicleResource;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
+
+import java.util.List;
 
 /**
- * [0.6] 4.0 车辆的 YMTR 渲染器（TrainRendererBase 子类）。
+ * [0.29 重构] 4.0 车辆渲染器——bbmodel 自定义盒的逐面绘制。
  * <p>
- * javap 完整抽象面：
- * <ul>
- *   <li>{@code createTrainInstance(TrainClient)}</li>
- *   <li>{@code renderCar(int, double×3, float×2, boolean×2)}</li>
- *   <li>{@code renderConnection(Vec3×8, double×3, float×2)} — 贯通道（8 顶点几何）</li>
- *   <li>{@code renderBarrier(Vec3×8, double×3, float×2)} — 端墙（8 顶点）</li>
- * </ul>
- * 基类静态渲染上下文：matrices(PoseStack) / vertexConsumers(MultiBufferSource)。
+ * 旧实现走 MC ModelPart bake（per-face UV 语义不兼容, docs/bbox-uv-flaw.md）。
+ * 新实现直接用 {@link BbModelLoader.BbBox} 列表 + 底层 quad 绘制：
+ * 每面独立 UV、无重叠盒、无 6 倍顶点。门盒按门参数整体 Z 偏移（平滑动画）。
  * <p>
- * renderCar 用 BbModelLoader bake 的 ModelPart 画车体；connection/barrier
- * 0.6 留空实现（0.7 接 properties_*.json 程序化面）。
+ * 顶点变换链（与 drawConnectionFace 同基础）：世界矩阵 → 车体平移/旋转 →
+ * 盒旋转(origin 欧拉) → quad。
  */
 public final class BbModelTrainRenderer extends TrainRendererBase {
 
 	private final String trainId;
 
+	/** [0.29] 门动画状态：每渲染器实例一个（=每列车实例） */
+	private float doorSlide = 0.0F;
+
+	/** 供 TrainTypeBridge 注册使用的公开构造器 */
 	public BbModelTrainRenderer(String trainId) {
 		this.trainId = trainId;
 	}
@@ -46,26 +47,88 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 				return;
 			}
 			final VehicleResource.ModelLayer layer = res.models.get(0);
-			final ModelPart model = BbModelLoader.bake(
+			final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
 					Minecraft.getInstance().getResourceManager(), layer.modelResource);
-			if (model == null) {
+			if (boxes == null || boxes.isEmpty()) {
 				return;
 			}
 			final ResourceLocation tex = texLocation(layer.textureResource);
 			final var vc = vertexConsumers.getBuffer(
 					net.minecraft.client.renderer.RenderType.entityCutoutNoCull(tex));
-			// [0.11] 门动画（渐进）：door_ 部件按门参数+帧率平滑推进
-			BbModelLoader.animateDoors(model, doorLeftOpen, doorRightOpen,
-					net.minecraft.client.Minecraft.getInstance().getDeltaFrameTime() / 20.0F);
+
+			// [0.29] 门平滑推进（与旧 DoorAnimator 同速率：开 0.5/s 关 0.8/s）
+			final float delta = Minecraft.getInstance().getDeltaFrameTime() / 20.0F;
+			final boolean open = doorLeftOpen || doorRightOpen;
+			if (doorSlide < (open ? 1.0F : 0.0F)) {
+				doorSlide = Math.min(open ? 1.0F : 0.0F, doorSlide + 0.5F * delta);
+			} else if (doorSlide > (open ? 1.0F : 0.0F)) {
+				doorSlide = Math.max(open ? 1.0F : 0.0F, doorSlide - 0.8F * delta);
+			}
+			final float doorOffset = -0.75F * doorSlide;
+
 			matrices.pushPose();
 			matrices.translate(x, y, z);
 			matrices.mulPose(com.mojang.math.Axis.YP.rotationDegrees(rotationY));
 			matrices.mulPose(com.mojang.math.Axis.ZP.rotationDegrees(rotationZ));
-			model.render(matrices, vc, 0xF000F0, 0);
+			final Matrix4f pose = matrices.last().pose();
+
+			for (final BbModelLoader.BbBox box : boxes) {
+				final float dz = box.isDoor ? doorOffset : 0.0F;
+				drawBoxFaces(vc, pose, box, dz);
+			}
 			matrices.popPose();
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("bbmodel renderCar failed", t);
 		}
+	}
+
+	/** 逐面绘制一盒六面（每面独立 bbmodel UV；缺 UV 面跳过） */
+	private void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
+		// bbmodel Y 向下 → MC Y 向上的翻转由 from/to 交换 y 实现
+		final float y1 = -box.y2, y2 = -box.y1;
+
+		if (box.uvDown != null) {
+			quad(vc, pose,
+					box.x1, y2, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz,
+					box.uvDown, box);
+		}
+		if (box.uvUp != null) {
+			quad(vc, pose,
+					box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x1, y1, box.z2 + dz,
+					box.uvUp, box);
+		}
+		if (box.uvNorth != null) {
+			quad(vc, pose,
+					box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x1, y2, box.z1 + dz,
+					box.uvNorth, box);
+		}
+		if (box.uvSouth != null) {
+			quad(vc, pose,
+					box.x1, y1, box.z2 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz,
+					box.uvSouth, box);
+		}
+		if (box.uvEast != null) {
+			quad(vc, pose,
+					box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x2, y2, box.z1 + dz,
+					box.uvEast, box);
+		}
+		if (box.uvWest != null) {
+			quad(vc, pose,
+					box.x1, y1, box.z1 + dz, box.x1, y1, box.z2 + dz, box.x1, y2, box.z2 + dz, box.x1, y2, box.z1 + dz,
+					box.uvWest, box);
+		}
+	}
+
+	/** 一面 quad：bbmodel UV 归一化到 24×24 贴图（u1,v1,u2,v2 → 0~1） */
+	private void quad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
+			float ax, float ay, float az, float bx, float by, float bz,
+			float cx, float cy, float cz, float dx, float dy, float dz,
+			float[] uv, BbModelLoader.BbBox box) {
+		final float u1 = uv[0] / 24.0F, v1 = uv[1] / 24.0F, u2 = uv[2] / 24.0F, v2 = uv[3] / 24.0F;
+		vc.vertex(pose, ax, ay, az).color(255, 255, 255, 255).uv(u1, v2).endVertex();
+		vc.vertex(pose, bx, by, bz).color(255, 255, 255, 255).uv(u2, v2).endVertex();
+		vc.vertex(pose, cx, cy, cz).color(255, 255, 255, 255).uv(u2, v1).endVertex();
+		vc.vertex(pose, dx, dy, dz).color(255, 255, 255, 255).uv(u1, v1).endVertex();
 	}
 
 	@Override
@@ -85,7 +148,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			drawConnectionFace(fromX, fromZ, toX, toZ, fromXFlip, fromZFlip, toXFlip, toZFlip,
 					y, angleX, angleZ,
 					props.gangwayInnerSide, props.gangwayHeight);
-			// [0.9.2] 顶/底封板：gangwayInnerTop/Bottom 贴图的水平横面
+			// [0.9.2] 顶/底封板
 			drawConnectionCap(fromX, fromZ, toX, toZ, y, props.gangwayInnerTop);
 			drawConnectionCap(fromXFlip, fromZFlip, toXFlip, toZFlip, y, props.gangwayInnerTop);
 			drawConnectionCap(fromX, toX, fromZ, toZ, y - props.gangwayHeight, props.gangwayInnerBottom);
@@ -96,7 +159,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 
 	@Override
 	public void renderBarrier(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ, Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip, double y, double width, double height, float angleX, float angleZ) {
-		// [0.7] 端墙程序化渲染：barrier 贴图组
+		// [0.7] 端墙程序化渲染
 		try {
 			final VehicleResource res = VehiclePackLoader.getVehicle(trainId);
 			if (res == null || res.models.isEmpty()) {
@@ -117,7 +180,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	}
 
 	/**
-	 * 在基类给的 8 顶点框架内画连接面（侧面贴图两条带 + 顶/底横面）。
+	 * 连接面侧面贴图带（正/反两条）
 	 */
 	private void drawConnectionFace(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ,
 			Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip,
@@ -128,17 +191,11 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		final var vc = vertexConsumers.getBuffer(
 				net.minecraft.client.renderer.RenderType.entityCutoutNoCull(texLocation(sideTex)));
 		final var pose = matrices.last().pose();
-		final var normal = matrices.last().normal();
-		// 正向边带: fromX→toZ 底边, 顶部 = y(基类给的连接面顶部高度)
-		quad(vc, pose, normal, fromX, toZ, y, faceHeight);
-		// 翻转边带
-		quad(vc, pose, normal, fromXFlip, toZFlip, y, faceHeight);
+		connectionQuad(vc, pose, fromX, toZ, y, faceHeight);
+		connectionQuad(vc, pose, fromXFlip, toZFlip, y, faceHeight);
 	}
 
-	/**
-	 * [0.7.1] 顶/底横面：车端连接面的水平封板（top/bottom 贴图）。
-	 * 顶点：fromX→toX（或翻转组）在 y 高度上的水平 quad。
-	 */
+	/** [0.9.2] 顶/底横面：车端连接面的水平封板 */
 	private void drawConnectionCap(Vec3 a, Vec3 b, Vec3 c, Vec3 d, double capY, String capTex) {
 		if (capTex == null || capTex.isEmpty()) {
 			return;
@@ -152,8 +209,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		vc.vertex(pose, (float) d.x, (float) capY, (float) d.z).color(255, 255, 255, 255).uv(0, 1).endVertex();
 	}
 
-	private void quad(com.mojang.blaze3d.vertex.VertexConsumer vc,
-			org.joml.Matrix4f pose, org.joml.Matrix3f normal,
+	private void connectionQuad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
 			Vec3 left, Vec3 right, double topY, double h) {
 		final float lx = (float) left.x, lz = (float) left.z;
 		final float rx = (float) right.x, rz = (float) right.z;
