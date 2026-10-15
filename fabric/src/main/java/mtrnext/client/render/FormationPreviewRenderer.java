@@ -54,9 +54,9 @@ public final class FormationPreviewRenderer {
 					poseStack.mulPose(com.mojang.math.Axis.YP.rotationDegrees(180));
 				}
 				final Matrix4f pose = poseStack.last().pose();
-				// 预览用已构造的 VertexConsumer（贴图取第一车）
+				// 预览用已构造的 VertexConsumer（贴图取第一车）；与主渲染器共享 winding，避免两处顶点顺序分道扬镳
 				for (final BbModelLoader.BbBox box : boxes) {
-					drawBox(vertexConsumer, pose, box, 0.0F);
+					BbModelTrainRenderer.drawBoxFaces(vertexConsumer, pose, box, 0.0F);
 				}
 				poseStack.popPose();
 
@@ -65,27 +65,6 @@ public final class FormationPreviewRenderer {
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("formation preview render failed", t);
 		}
-	}
-
-	/** [0.30] winding 与主渲染器同步（从外部看逆时针；east 交换对角） */
-	private static void drawBox(VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
-		final float y1 = -box.y2, y2 = -box.y1;
-		if (box.uvDown != null) face(vc, pose, box.x1, y2, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x2, y2, box.z1 + dz, box.x1, y2, box.z1 + dz, box.uvDown);
-		if (box.uvUp != null) face(vc, pose, box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x1, y1, box.z2 + dz, box.uvUp);
-		if (box.uvNorth != null) face(vc, pose, box.x1, y2, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x1, y1, box.z1 + dz, box.uvNorth);
-		if (box.uvSouth != null) face(vc, pose, box.x1, y1, box.z2 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz, box.uvSouth);
-		if (box.uvEast != null) face(vc, pose, box.x2, y1, box.z2 + dz, box.x2, y1, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y2, box.z2 + dz, box.uvEast);
-		if (box.uvWest != null) face(vc, pose, box.x1, y1, box.z1 + dz, box.x1, y1, box.z2 + dz, box.x1, y2, box.z2 + dz, box.x1, y2, box.z1 + dz, box.uvWest);
-	}
-
-	private static void face(VertexConsumer vc, Matrix4f pose,
-			float ax, float ay, float az, float bx, float by, float bz,
-			float cx, float cy, float cz, float dx, float dy, float dz, float[] uv) {
-		final float u1 = uv[0] / 24.0F, v1 = uv[1] / 24.0F, u2 = uv[2] / 24.0F, v2 = uv[3] / 24.0F;
-		vc.vertex(pose, ax, ay, az).color(255, 255, 255, 255).uv(u1, v2).endVertex();
-		vc.vertex(pose, bx, by, bz).color(255, 255, 255, 255).uv(u2, v2).endVertex();
-		vc.vertex(pose, cx, cy, cz).color(255, 255, 255, 255).uv(u2, v1).endVertex();
-		vc.vertex(pose, dx, dy, dz).color(255, 255, 255, 255).uv(u1, v1).endVertex();
 	}
 
 	/** 供调用方取贴图（VertexConsumer 由调用方以正确贴图构造） */

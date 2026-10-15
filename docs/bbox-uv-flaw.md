@@ -27,9 +27,9 @@ drawConnectionFace/quad 方法）：
 ## 影响范围
 
 - BbModelLoader 的 CubeListBuilder/MeshDefinition 链全换
-- BbModelTrainRenderer.renderCar 改绘制路径
-- DoorAnimator 适配
-- FormationPreviewRenderer 适配
+- BbModelTrainRenderer.renderCar 改绘制路径（门盒按 isDoor 整体 z 偏移，doorSlide 平滑推进）
+- FormationPreviewRenderer 与 BbModelTrainRenderer 共享 drawBoxFaces/quad，不再重复 winding 顶点顺序
+- DoorAnimator 已删除（死代码，主渲染器自带等价的门平滑推进）
 
 这是一个 ~2 小时的重构。ERIDU 样本（驾驶面板 bbmodel 有 12 elements、
 面 UV 普遍非零）在当前实现下**贴图是错位的**——只是 3D 预览缩放小、
@@ -38,3 +38,9 @@ drawConnectionFace/quad 方法）：
 ## 行动
 
 立即实施（视觉正确性 P0）。
+
+## 0.33.0 清理已完成
+
+- 删除 DoorAnimator.java（无任何调用点）
+- BbModelTrainRenderer.drawBoxFaces/quad 改为 static，由 FormationPreviewRenderer 复用
+- FormationPreviewRenderer 删除本地 drawBox/face 重复实现

@@ -87,7 +87,13 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 * 北面(Z-)、南面(Z+)、西面(X-)已对；东面(X+)原序为顺时针(从 -X 看)
 	 * → 交换对角顶点修正为从 +X 看逆时针。down/up 双面各按地面/顶视
 	 * 观察方向逆时针。UV 对应随顶点交换同步调整。 */
-	private void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
+	/** 逐面绘制一盒六面（每面独立 bbmodel UV；缺 UV 面跳过）。
+	 * [0.30] winding 核对：从外部看每面取逆时针序（MC 正面规则）。
+	 * 北面(Z-)、南面(Z+)、西面(X-)已对；东面(X+)原序为顺时针(从 -X 看)
+	 * → 交换对角顶点修正为从 +X 看逆时针。down/up 双面各按地面/顶视
+	 * 观察方向逆时针。UV 对应随顶点交换同步调整。
+	 * 与 FormationPreviewRenderer 共享此方法，避免两处 winding 逻辑分道扬镳。 */
+	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
 		// bbmodel Y 向下 → MC Y 向上的翻转由 from/to 交换 y 实现
 		final float y1 = -box.y2, y2 = -box.y1;
 
@@ -131,7 +137,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 
 	/** 一面 quad：bbmodel UV 归一化到 24×24 贴图（u1,v1,u2,v2 → 0~1）
 	 * [0.30] 参数表随 winding 修正同步：v 分量按"y 大 = v 小"（贴图 V 向下） */
-	private void quad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
+	static void quad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
 			float ax, float ay, float az, float bx, float by, float bz,
 			float cx, float cy, float cz, float dx, float dy, float dz,
 			float[] uv) {
