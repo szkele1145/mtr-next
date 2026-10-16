@@ -8,7 +8,7 @@ import mtrnext.formation.FormationStore;
 import mtrnext.pack.VehiclePackLoader;
 import mtrnext.pack.VehicleResource;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.client.renderer.MultiBufferSource;
 import org.joml.Matrix4f;
 
 import java.util.List;
@@ -19,13 +19,17 @@ import java.util.UUID;
  * <p>
  * 旧实现经 ModelPart bake（per-face UV 缺陷）——与渲染器同步换到
  * BbBox 直绘。预览无门动画（静态展示）。
+ * <p>
+ * [0.34] 多模型层：遍历 {@code res.models} 全部层，每层按自己的
+ * {@code textureResource} 取 buffer（调用方传 MultiBufferSource）。
+ * 旧版只画第 0 层，5 层车包在预览里同样丢 4 层。
  */
 public final class FormationPreviewRenderer {
 
 	private FormationPreviewRenderer() {
 	}
 
-	public static void render(PoseStack poseStack, VertexConsumer vertexConsumer, UUID sidingKey) {
+	public static void render(PoseStack poseStack, MultiBufferSource buffers, UUID sidingKey) {
 		try {
 			final Formation formation = FormationStore.get(sidingKey);
 			if (formation == null || formation.cars.isEmpty()) {
@@ -40,13 +44,6 @@ public final class FormationPreviewRenderer {
 					carIndex++;
 					continue;
 				}
-				final VehicleResource.ModelLayer layer = res.models.get(0);
-				final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
-						Minecraft.getInstance().getResourceManager(), layer.modelResource);
-				if (boxes == null || boxes.isEmpty()) {
-					carIndex++;
-					continue;
-				}
 
 				poseStack.pushPose();
 				poseStack.translate((carIndex - (total - 1) * 0.5) * 1.5, 0, 0);
@@ -54,9 +51,21 @@ public final class FormationPreviewRenderer {
 					poseStack.mulPose(com.mojang.math.Axis.YP.rotationDegrees(180));
 				}
 				final Matrix4f pose = poseStack.last().pose();
-				// 预览用已构造的 VertexConsumer（贴图取第一车）；与主渲染器共享 winding，避免两处顶点顺序分道扬镳
-				for (final BbModelLoader.BbBox box : boxes) {
-					BbModelTrainRenderer.drawBoxFaces(vertexConsumer, pose, box, 0.0F);
+				// [0.34] 遍历全部模型层（与 BbModelTrainRenderer 同语义），
+				// 每层各取自己贴图的 buffer；预览不跑门动画（dz 恒 0）。
+				for (final VehicleResource.ModelLayer layer : res.models) {
+					final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
+							Minecraft.getInstance().getResourceManager(), layer.modelResource);
+					if (boxes == null || boxes.isEmpty()) {
+						continue;
+					}
+					final VertexConsumer vc = buffers.getBuffer(
+							net.minecraft.client.renderer.RenderType.entityCutoutNoCull(
+									BbModelTrainRenderer.texLocation(layer.textureResource)));
+					// 与主渲染器共享 winding，避免两处顶点顺序分道扬镳
+					for (final BbModelLoader.BbBox box : boxes) {
+						BbModelTrainRenderer.drawBoxFaces(vc, pose, box, 0.0F);
+					}
 				}
 				poseStack.popPose();
 
@@ -65,22 +74,5 @@ public final class FormationPreviewRenderer {
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("formation preview render failed", t);
 		}
-	}
-
-	/** 供调用方取贴图（VertexConsumer 由调用方以正确贴图构造） */
-	public static ResourceLocation textureOf(Formation formation) {
-		if (formation != null && !formation.cars.isEmpty()) {
-			final VehicleResource res = VehiclePackLoader.getVehicle(formation.cars.get(0).vehicleId);
-			if (res != null && !res.models.isEmpty()) {
-				final String tex = res.models.get(0).textureResource;
-				if (tex != null && !tex.isEmpty()) {
-					final String[] parts = tex.split(":", 2);
-					return parts.length == 2
-							? new ResourceLocation(parts[0], parts[1])
-							: new ResourceLocation("minecraft", parts[0]);
-				}
-			}
-		}
-		return new ResourceLocation("minecraft", "textures/block/white_concrete.png");
 	}
 }

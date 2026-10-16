@@ -46,17 +46,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			if (res == null || res.models.isEmpty()) {
 				return;
 			}
-			final VehicleResource.ModelLayer layer = res.models.get(0);
-			final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
-					Minecraft.getInstance().getResourceManager(), layer.modelResource);
-			if (boxes == null || boxes.isEmpty()) {
-				return;
-			}
-			final ResourceLocation tex = texLocation(layer.textureResource);
-			final var vc = vertexConsumers.getBuffer(
-					net.minecraft.client.renderer.RenderType.entityCutoutNoCull(tex));
-
-			// [0.29] 门平滑推进（与旧 DoorAnimator 同速率：开 0.5/s 关 0.8/s）
+			// [0.29] 门平滑推进（开 0.5/s, 关 0.8/s）
 			final float delta = Minecraft.getInstance().getDeltaFrameTime() / 20.0F;
 			final boolean open = doorLeftOpen || doorRightOpen;
 			if (doorSlide < (open ? 1.0F : 0.0F)) {
@@ -72,9 +62,22 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			matrices.mulPose(com.mojang.math.Axis.ZP.rotationDegrees(rotationZ));
 			final Matrix4f pose = matrices.last().pose();
 
-			for (final BbModelLoader.BbBox box : boxes) {
-				final float dz = box.isDoor ? doorOffset : 0.0F;
-				drawBoxFaces(vc, pose, box, dz);
+			// [0.34] 遍历全部模型层。4.0 的 models[] 是"叠放图层"而非变体互斥：
+			// 实测 ERIDU-DG1000A 头车 5 层 = 车体/内饰/LCD/驾驶面板
+			// （证据见 docs/multi-layer-rendering.md）。旧实现只取 models.get(0)，
+			// 多层车包实际只渲染第 0 层（5 层丢 4 层）。每层自带贴图 →
+			// 各取自己的 RenderType/VertexConsumer，缺层跳过不影响其余层。
+			for (final VehicleResource.ModelLayer layer : res.models) {
+				final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
+						Minecraft.getInstance().getResourceManager(), layer.modelResource);
+				if (boxes == null || boxes.isEmpty()) {
+					continue;
+				}
+				final var vc = vertexConsumers.getBuffer(
+						net.minecraft.client.renderer.RenderType.entityCutoutNoCull(texLocation(layer.textureResource)));
+				for (final BbModelLoader.BbBox box : boxes) {
+					drawBoxFaces(vc, pose, box, box.isDoor ? doorOffset : 0.0F);
+				}
 			}
 			matrices.popPose();
 		} catch (final Throwable t) {
@@ -82,17 +85,16 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		}
 	}
 
-	/** 逐面绘制一盒六面（每面独立 bbmodel UV；缺 UV 面跳过）
-	 * [0.30] winding 核对：从外部看每面取逆时针序（MC 正面规则）。
-	 * 北面(Z-)、南面(Z+)、西面(X-)已对；东面(X+)原序为顺时针(从 -X 看)
-	 * → 交换对角顶点修正为从 +X 看逆时针。down/up 双面各按地面/顶视
-	 * 观察方向逆时针。UV 对应随顶点交换同步调整。 */
 	/** 逐面绘制一盒六面（每面独立 bbmodel UV；缺 UV 面跳过）。
 	 * [0.30] winding 核对：从外部看每面取逆时针序（MC 正面规则）。
 	 * 北面(Z-)、南面(Z+)、西面(X-)已对；东面(X+)原序为顺时针(从 -X 看)
 	 * → 交换对角顶点修正为从 +X 看逆时针。down/up 双面各按地面/顶视
 	 * 观察方向逆时针。UV 对应随顶点交换同步调整。
-	 * 与 FormationPreviewRenderer 共享此方法，避免两处 winding 逻辑分道扬镳。 */
+	 * 与 FormationPreviewRenderer 共享此方法，避免两处 winding 逻辑分道扬镳。
+	 * [0.34] 注意：层的 {@code flipTextureV} 尚未参与绘制。bbmodel 与 MC 的
+	 * UV 原点同为左上角，故默认 {@code true} 未必意味着需要 v→1-v；该字段
+	 * 语义待客户端证据确认（见 docs/multi-layer-rendering.md），贸然实装会让
+	 * 所有现存车包贴图上下颠倒。 */
 	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
 		// bbmodel Y 向下 → MC Y 向上的翻转由 from/to 交换 y 实现
 		final float y1 = -box.y2, y2 = -box.y1;
@@ -136,7 +138,8 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	}
 
 	/** 一面 quad：bbmodel UV 归一化到 24×24 贴图（u1,v1,u2,v2 → 0~1）
-	 * [0.30] 参数表随 winding 修正同步：v 分量按"y 大 = v 小"（贴图 V 向下） */
+	 * [0.30] 参数表随 winding 修正同步：v 分量按"y 大 = v 小"（贴图 V 向下）
+	 */
 	static void quad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
 			float ax, float ay, float az, float bx, float by, float bz,
 			float cx, float cy, float cz, float dx, float dy, float dz,
@@ -156,6 +159,9 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			if (res == null || res.models.isEmpty()) {
 				return;
 			}
+			// 贯通道/端墙属性是"每车"而非"每层"语义（4.0 properties_*.json
+			// 描述整车 gangway/barrier），故只读第 0 层的 propertiesResource——
+			// 与上面的多模型层循环不同，这里不是遗漏。
 			final VehicleResource.ModelLayer layer = res.models.get(0);
 			if (layer.propertiesResource.isEmpty()) {
 				return;
@@ -182,6 +188,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			if (res == null || res.models.isEmpty()) {
 				return;
 			}
+			// 同 renderConnection：端墙属性按"每车"取，固定第 0 层
 			final VehicleResource.ModelLayer layer = res.models.get(0);
 			if (layer.propertiesResource.isEmpty()) {
 				return;
@@ -237,7 +244,9 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		vc.vertex(pose, lx, (float) topY, lz).color(255, 255, 255, 255).uv(0, 0).endVertex();
 	}
 
-	private static ResourceLocation texLocation(String resource) {
+	/** 车包贴图字符串 → ResourceLocation（供本类与 FormationPreviewRenderer 共用）。
+	 * 缺省/空回退白色混凝土，避免 entityCutoutNoCull 拿到空贴图。 */
+	static ResourceLocation texLocation(String resource) {
 		if (resource == null || resource.isEmpty()) {
 			return new ResourceLocation("minecraft", "textures/block/white_concrete.png");
 		}

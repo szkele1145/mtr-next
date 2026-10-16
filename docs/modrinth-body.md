@@ -1,9 +1,10 @@
-## Feature Matrix (0.32.0)
+## Feature Matrix (0.34.0)
 
 | Feature | Status |
 |---|---|
 | **Rail placement preview** | Curve-exact - sampled from the same Bezier geometry as real rails (64 segments): what you see is exactly what gets built; `RailAngle.fromAngle` bytecode-verified against YMTR jar |
 | **4.0-format vehicle packs** | Full 3-level schema: geometry / bogies / coupling faces (gangway+barrier) / multi-model layers / legacy fields |
+| **Multi-model layer rendering** | **0.34 new** - `VehicleResource.models` iterates every layer; each layer binds its own `textureResource` buffer. Train bodies and formation preview no longer drop all-but-one layer (old code only drew `models.get(0)`) |
 | **Custom formations** | Full pipeline - formation editor on the siding screen: pick cars, head-to-head flips (per-car and Flip All), coupling-face validation with visible rejection feedback, pack-color swatch icons, selected-vehicle detail bar, paginated lists on both sides |
 | **Vehicle rendering** | bbmodel native per-face UV (no CubeListBuilder bake): each face drawn with its own bbmodel UV, no overlapping boxes, no 6× vertices, through YMTR's own train rendering pipeline |
 | **Door animation** | Smooth interpolation - door parts slide at real door-mechanism rates (open 0.5/s, close 0.8/s), per-train state, baked into the quad render path |
@@ -22,7 +23,7 @@
 - Four-way coexistence test: YMTR + MTR Turbo + MTR Next + ANTE + ERIDU dual-format pack, zero conflicts
 - Format proven against the ERIDU-DG1000A reference pack (every sound key exercised)
 - All hooks bytecode-verified; four review-driven quality passes over the sound hot path (reflection dedup, early termination, single config fetch, single speed fetch)
-- Vehicle pack hardening (0.32): blank/missing `id` rejected instead of collapsing to "unknown"; malformed model layers (string/number/null) skipped per-layer instead of killing the whole vehicle; 9-digit hex colors fall back to white instead of silent truncation; `length:"abc"` throws `NumberFormatException` isolated per vehicle
+- Vehicle pack hardening: blank/missing `id` rejected instead of collapsing to "unknown"; malformed model layers (string/number/null) skipped per-layer instead of killing the whole vehicle; 9-digit hex colors fall back to white instead of silent truncation; `length:"abc"` throws `NumberFormatException` isolated per vehicle
 
 ## Usage
 

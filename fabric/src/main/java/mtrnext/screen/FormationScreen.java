@@ -262,11 +262,10 @@ public final class FormationScreen extends Screen {
 				pose.translate(this.width / 2.0, this.height * 0.72, 100.0);
 				pose.scale(scale, -scale, scale); // GUI 坐标系 Y 翻转 → 模型正立
 				pose.mulPose(com.mojang.math.Axis.XP.rotationDegrees(35)); // 俯视
-				final var tex = mtrnext.client.render.FormationPreviewRenderer.textureOf(formation);
-				final var vc = Minecraft.getInstance().renderBuffers().bufferSource()
-						.getBuffer(net.minecraft.client.renderer.RenderType.entityCutoutNoCull(tex));
-				mtrnext.client.render.FormationPreviewRenderer.render(pose, vc, sidingId);
-				Minecraft.getInstance().renderBuffers().bufferSource().endBatch();
+				// [0.34] 传 MultiBufferSource：渲染器按每层贴图各取 buffer
+				final var buffers = Minecraft.getInstance().renderBuffers().bufferSource();
+				mtrnext.client.render.FormationPreviewRenderer.render(pose, buffers, sidingId);
+				buffers.endBatch();
 				pose.popPose();
 			} catch (final Throwable t) {
 				MtrNext.LOGGER.debug("formation 3d preview failed", t);
