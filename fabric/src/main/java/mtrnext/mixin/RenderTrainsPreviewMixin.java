@@ -32,7 +32,22 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(targets = "mtr.render.RenderTrains", remap = false)
 public abstract class RenderTrainsPreviewMixin {
 
-	@Inject(method = "render(Lnet/minecraft/class_1297;FLnet/minecraft/class_4587;Lnet/minecraft/class_4597;)V", at = @At("RETURN"), remap = false)
+	// [0.34.2 修复·完整链] 三层证据：
+	// 1) 运行时真身（生产 jar javap 实证）：static render 签名是
+	//    (Lmtr/entity/EntitySeat;FLnet/minecraft/class_4587;Lnet/minecraft/class_4597;)V
+	//    —— 第一参数是 YMTR 自己的 EntitySeat，不是原版 MTR 的 class_1297
+	//    （Turbo 面向原版 MTR，宿主签名不同，不能照抄）。
+	//    旧代码写 class_1297 且 remap=false 字面匹配 → 永不命中，预览自加入起从未生效。
+	// 2) 编译期：本工程用 officialMojangMappings，Loom 把 YMTR 重映射成
+	//    Mojmap 名进 classpath（javap 实证：PoseStack/MultiBufferSource）。
+	//    类级 remap=false 会被成员继承，成员也字面匹配 → AP 在 Mojmap
+	//    classpath 找 class_4587 必报 "Cannot find target method"。
+	// 3) 桥接：成员级显式 remap=true + Mojmap 描述符。AP 借 mappings 在
+	//    编译期强校验签名（写错立刻发现），并把 PoseStack→class_4587 写入
+	//    mtr-next.refmap.json；运行时 mixin 系统经 refmap 还原成 intermediary
+	//    描述符，与生产 YMTR 字面签名精确命中。EntitySeat 是 YMTR 自有类，
+	//    非 net/minecraft 前缀不被重映射，两空间一致，无桥接风险。
+	@Inject(method = "render(Lmtr/entity/EntitySeat;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V", at = @At("RETURN"), remap = true)
 	private static void mtrnext$renderRailPreview(Object entity, float tickDelta, Object matrixStack, Object vertexConsumerProvider, CallbackInfo ci) {
 		try {
 			final Minecraft mc = Minecraft.getInstance();
