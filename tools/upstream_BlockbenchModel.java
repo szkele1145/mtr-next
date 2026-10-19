@@ -1,4 +1,4 @@
-﻿package org.mtr.mod.resource;
+package org.mtr.mod.resource;
 
 import org.mtr.core.serializer.ReaderBase;
 import org.mtr.libraries.it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -42,4 +42,3 @@ public final class BlockbenchModel extends BlockbenchModelSchema {
 		return groups;
 	}
 }
-
