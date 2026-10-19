@@ -73,14 +73,47 @@ public final class BbModelLoader {
 		if (!root.has("elements") || !root.get("elements").isJsonArray()) {
 			return boxes;
 		}
+		// [0.34.3] outliner 解析：element uuid → 祖先分组名链。
+		// 实测 eridudanguei：element.name 无门信息（全是 cube），门归属在
+		// outliner 组名（door/men2/men3...），properties parts[].names 匹配
+		// 的正是这些组名。children 是混合数组（uuid 字符串 + 子组对象）。
+		final Map<String, List<String>> groupPaths = new java.util.HashMap<>();
+		if (root.has("outliner") && root.get("outliner").isJsonArray()) {
+			walkOutliner(root.getAsJsonArray("outliner"), new java.util.ArrayDeque<>(), groupPaths);
+		}
 		for (final JsonElement el : root.getAsJsonArray("elements")) {
 			final JsonObject element = el.getAsJsonObject();
 			final BbBox box = buildBox(element);
 			if (box != null) {
+				final List<String> path = groupPaths.get(str(element, "uuid", ""));
+				box.groupPath = path != null ? path : java.util.List.of();
 				boxes.add(box);
 			}
 		}
 		return boxes;
+	}
+
+	/**
+	 * [0.34.3] 递归 outliner：为每个 element uuid 记录从根到叶的祖先组名链。
+	 * children 混合数组：字符串 = element uuid 引用；对象 = 子分组（可再嵌套）。
+	 */
+	private static void walkOutliner(com.google.gson.JsonArray arr, java.util.Deque<String> path,
+			Map<String, List<String>> out) {
+		for (final JsonElement el : arr) {
+			if (el == null) {
+				continue;
+			}
+			if (el.isJsonPrimitive()) {
+				out.put(el.getAsString(), List.copyOf(path));
+			} else if (el.isJsonObject()) {
+				final JsonObject group = el.getAsJsonObject();
+				path.addLast(str(group, "name", ""));
+				if (group.has("children") && group.get("children").isJsonArray()) {
+					walkOutliner(group.getAsJsonArray("children"), path, out);
+				}
+				path.removeLast();
+			}
+		}
 	}
 
 	private static BbBox buildBox(JsonObject element) {
@@ -154,6 +187,31 @@ public final class BbModelLoader {
 	}
 
 	/**
+	 * [0.34.3] 组名归属门判定（数据面，渲染端暂不消费）。
+	 * <p>
+	 * 对 4.0 车包：parts[].names 匹配 outliner 组名；带非零门倍率的部件
+	 * 其组名下的所有盒视为门部件。falls back 到 element.name contains
+	 * "door"（3.x / YMTR 导出模型的旧约定）。
+	 */
+	public static boolean isDoorByGroup(BbBox box, java.util.List<Properties4xLoader.PartInfo> parts) {
+		if (box == null) {
+			return false;
+		}
+		if (parts != null && !box.groupPath.isEmpty()) {
+			for (Properties4xLoader.PartInfo p : parts) {
+				if (p.doorXMultiplier != 0.0F || p.doorZMultiplier != 0.0F) {
+					for (String g : box.groupPath) {
+						if (p.names.contains(g)) {
+							return true;
+						}
+					}
+				}
+			}
+		}
+		return box.isDoor;
+	}
+
+	/**
 	 * bbmodel 盒（原生语义：一盒六面、每面独立 UV）。
 	 * 渲染器按面绘制，门盒整体偏移。
 	 * <p>
@@ -167,6 +225,8 @@ public final class BbModelLoader {
 		public float rotX, rotY, rotZ;
 		public float originX, originY, originZ;
 		public final boolean isDoor;
+		/** [0.34.3] element 所在的 outliner 祖先组名链（根→叶；无组 = 空表） */
+		public List<String> groupPath = java.util.List.of();
 		public float[] uvDown, uvUp, uvNorth, uvSouth, uvEast, uvWest;
 
 		BbBox(boolean isDoor) {
