@@ -110,11 +110,11 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 * → 交换对角顶点修正为从 +X 看逆时针。down/up 双面各按地面/顶视
 	 * 观察方向逆时针。UV 对应随顶点交换同步调整。
 	 * 与 FormationPreviewRenderer 共享此方法，避免两处 winding 逻辑分道扬镳。
-	 * [0.34] 注意：层的 {@code flipTextureV} 尚未参与绘制。bbmodel 与 MC 的
-	 * UV 原点同为左上角，故默认 {@code true} 未必意味着需要 v→1-v；实测
-	 * ERIDU-DG1000A 全部层 flipTextureV=true，语义待客户端证据确认
-	 * （开放问题记录于 docs/door-animation-audit.md §4），贸然实装会让
-	 * 所有现存车包贴图上下颠倒。 */
+	 * [0.35.2] {@code flipTextureV} 语义已按上游定论：上游 VehicleModel.createModel
+	 * 只把它传给 .obj/.mqo 路径（ModelResourceLoader.loadModel），bbmodel 路径
+	 * （DynamicVehicleModel 的 BlockbenchModel 构造器）完全不接收——即上游对
+	 * bbmodel 同样不消费该字段（Blockbench 导出的 UV 原点本就与 MC 一致，
+	 * 无需翻转）。mtr-next 不实装该字段 = 与上游行为一致，非遗漏。 */
 	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
 		drawBoxFaces(vc, pose, box, 0.0F, dz);
 	}

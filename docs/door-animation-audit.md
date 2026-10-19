@@ -163,5 +163,40 @@ final boolean isDoor = name.toLowerCase(Locale.ROOT).contains("door");
 `positionDefinitions` 的 `positionsFlipped` 位置组（上游
 `ModelPropertiesPart.java:649-650` 会整体镜像 X/Z 并把 `flipped` 传进曲线）。
 同一模型在正/反方向车头会整体镜像渲染，届时门位移方向需反号。
-另：`flipTextureV` 语义仍未确认（见 §四遗留与 `BbModelTrainRenderer` 注释），
-未贸然实装以免所有车包贴图上下颠倒。
+
+### 附：`flipTextureV` 已定论（2026-10-20 上游实证）——**不实装是正确的**
+
+上游 `VehicleModel.createModel` 的分支（`VehicleModel.java:114-150`）：
+
+```java
+if (modelResource.endsWith(".bbmodel")) {
+    return new DynamicVehicleModel(new BlockbenchModel(...), textureId, modelProperties, positionDefinitions, id);
+    //                                    ↑ 构造器签名里没有 flipTextureV
+} else if (ModelResourceLoader.isSupportedModelResource(modelResource)) {
+    return new DynamicVehicleModel(ModelResourceLoader.loadModel(modelResource, textureId, flipTextureV, ...), ...);
+    //                                                                      ↑ 只有 .obj/.mqo/.mqoz 路径接收
+}
+```
+
+即 **上游对 bbmodel 同样不消费 `flipTextureV`**——该字段只影响 OBJ/MQO 的
+UV 导入（`ModelResourceLoader.loadModel` → `OptimizedModel.ObjModel.loadModel`）。
+Blockbench 导出的 UV 原点本就与 MC 一致，无需翻转。
+mtr-next 不实装该字段 = **与上游行为一致**，不是遗漏。
+
+## 五b、已实现（0.35.2 追加）
+
+**门重叠离线检测**（上游 `DynamicVehicleModel.testDoors` 的移植，
+`DynamicVehicleModel.java:119-145`）：模拟门从 t=0 到 t=1 走 5 个时间片，
+若两扇门"初始不相交、中途相交"，说明门 X/Z 倍率配错（车包作者配置错误），
+上游打 WARN。移植为 `BbModelLoader.detectDoorOverlaps(boxes)`，纯数据逻辑可离线回归。
+
+**本次实测得出的两条算法事实**（已写进测试用例）：
+
+1. **同向同量滑动的两扇门永远不会相撞**——相对距离恒定。故能触发告警的
+   错误配置是**倍率不等**（快门追上慢门），不是"同向"。
+2. ERIDU 的 +11/−11 反向对滑配置，两门**初始包围盒本就相交**（实测 men2
+   z 跨 [-56.8, 63.5]、men3 z 跨 [-59.5, 40.0] 像素）→ 上游"初始相交则跳过"
+   分支会直接放过，不误报。
+
+> 由此可知上游 `testDoors` 的实际覆盖能力有限：它只能发现"倍率明显配错"的
+> 极端情形，对 ERIDU 这类正确配置无诊断价值。移植保留其语义，不夸大其作用。

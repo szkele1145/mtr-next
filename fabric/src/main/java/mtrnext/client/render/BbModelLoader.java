@@ -290,6 +290,56 @@ public final class BbModelLoader {
 	}
 
 	/**
+	 * [0.35.2] 门重叠离线检测（上游 DynamicVehicleModel.testDoors 的移植）。
+	 * <p>
+	 * 上游语义：模拟门从 t=0 到 t=1 走 5 个时间片，若两扇门在"初始不相交、
+	 * 中途相交"，说明门 X/Z 倍率配错（车包作者配置错误），上游打 WARN。
+	 * 本方法为纯数据逻辑，可离线回归；供 ParserSelfTest 与将来运行时
+	 * 资源重载时的告警复用。
+	 *
+	 * @return 重叠的门盒对描述列表（空 = 无问题）
+	 */
+	public static List<String> detectDoorOverlaps(List<BbBox> boxes) {
+		final List<String> problems = new ArrayList<>();
+		if (boxes == null) {
+			return problems;
+		}
+		// 只看门盒；带索引便于报错定位
+		final List<BbBox> doors = new ArrayList<>();
+		for (final BbBox box : boxes) {
+			if (box.isAnimatedDoor()) {
+				doors.add(box);
+			}
+		}
+		if (doors.size() < 2) {
+			return problems;
+		}
+		final int slices = 5;
+		for (int i = 0; i < doors.size(); i++) {
+			for (int j = i + 1; j < doors.size(); j++) {
+				final BbBox a = doors.get(i), b = doors.get(j);
+				// 初始（t=0）不相交才检测中途相交——上游同款语义
+				if (a.intersects(b, 0, 0, 0, 0)) {
+					continue;
+				}
+				for (int k = 1; k <= slices; k++) {
+					final float t = (float) k / slices;
+					final float ax = a.doorAnim.getDoorAnimationX(a.doorXMult, false, t) / 16.0F;
+					final float az = a.doorAnim.getDoorAnimationZ(a.doorZMult, false, t, true) / 16.0F;
+					final float bx = b.doorAnim.getDoorAnimationX(b.doorXMult, false, t) / 16.0F;
+					final float bz = b.doorAnim.getDoorAnimationZ(b.doorZMult, false, t, true) / 16.0F;
+					if (a.intersects(b, ax, az, bx, bz)) {
+						problems.add("doors overlap at t=" + t + ": group=[" + String.join("/", a.groupPath)
+								+ "] vs [" + String.join("/", b.groupPath) + "]");
+						break;
+					}
+				}
+			}
+		}
+		return problems;
+	}
+
+	/**
 	 * [0.34.3] 组名归属门判定（数据面，渲染端暂不消费）。
 	 * <p>
 	 * 对 4.0 车包：parts[].names 匹配 outliner 组名；带非零门倍率的部件
@@ -352,6 +402,22 @@ public final class BbModelLoader {
 		/** [0.35] 是否为可动画门部件（上游 isDoor() 同判定） */
 		public boolean isAnimatedDoor() {
 			return doorAnim != null;
+		}
+
+		/**
+		 * [0.35.2] 轴对齐盒相交判定（含边界接触）——门重叠检测用。
+		 * <p>
+		 * 上游 DynamicVehicleModel.testDoors 用 {@code Box.intersects} 做同款判定
+		 * （上游 org.mtr.mapping.holder.Box），此处按同样语义在本地实现。
+		 *
+		 * @param ox X 轴偏移（格）
+		 * @param oz Z 轴偏移（格）
+		 */
+		public boolean intersects(BbBox other, float ox, float oz, float otherOx, float otherOz) {
+			final float ax1 = x1 + ox, ax2 = x2 + ox, az1 = z1 + oz, az2 = z2 + oz;
+			final float bx1 = other.x1 + otherOx, bx2 = other.x2 + otherOx;
+			final float bz1 = other.z1 + otherOz, bz2 = other.z2 + otherOz;
+			return ax1 <= bx2 && bx1 <= ax2 && az1 <= bz2 && bz1 <= az2;
 		}
 	}
 }

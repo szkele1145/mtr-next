@@ -35,6 +35,7 @@ public final class ParserSelfTest {
 		testDoorAnimation4x();
 		testBbModelScaleAndUv();
 		testDoorAnnotation();
+		testDoorOverlapDetection();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
@@ -544,6 +545,93 @@ public final class ParserSelfTest {
 						""")), xParts);
 		check("X-only 门被标注", ann3.get(0).doorAnim == mtrnext.client.render.DoorAnimation4x.PLUG_FAST);
 		check("X-only 门 x 倍率=11", near(ann3.get(0).doorXMult, 11.0F));
+	}
+
+	/**
+	 * [0.35.2] 门重叠离线检测（上游 DynamicVehicleModel.testDoors 移植）。
+	 * <p>
+	 * 上游算法：模拟门从 t=0 到 t=1 走 5 个时间片，若两扇门"初始不相交、
+	 * 中途相交"，说明门 X/Z 倍率配错 → 上游打 WARN。
+	 * <p>
+	 * 关键推论（本次实测得出）：<b>同向同量滑动的两扇门永远不会相撞</b>
+	 * ——相对距离恒定。故能触发的错误配置是<b>倍率不等</b>（快门追上慢门）。
+	 * 另：ERIDU 那种 +11/−11 反向对滑配置，初始包围盒本就相交
+	 * （实测 men2 z 跨 [-56.8, 63.5]、men3 z 跨 [-59.5, 40.0]），
+	 * 故上游的"初始相交则跳过"分支会直接放过——不误报。
+	 */
+	private static void testDoorOverlapDetection() {
+		System.out.println("[BbModelLoader.detectDoorOverlaps（上游 testDoors 移植）]");
+
+		// --- 场景 A：同向同量滑动 → 相对距离恒定 → 不该报（防误报） ---
+		final var sameSpeed = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+				{ "elements": [
+				  { "uuid": "d1", "name": "cube", "from": [304,0,0],   "to": [320,64,124] },
+				  { "uuid": "d2", "name": "cube", "from": [304,0,128], "to": [320,64,252] } ],
+				  "outliner": [
+				    { "name": "men2", "children": ["d1"] },
+				    { "name": "men3", "children": ["d2"] } ] }
+				"""));
+		final var sameParts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD" },
+				  { "names": ["men3"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD" } ] }
+				"""));
+		final var sameBoxes = mtrnext.client.render.BbModelLoader.annotateForTest(sameSpeed, sameParts);
+		check("同向同量滑动（相对距离恒定）不报",
+				mtrnext.client.render.BbModelLoader.detectDoorOverlaps(sameBoxes).isEmpty());
+
+		// --- 场景 B：倍率不等（快门追上慢门）→ 应报重叠 ---
+		// d1 z=[0,10]格, d2 z=[12,22]格（初始不相交）
+		// d1 滑 +40px=2.5格, d2 滑 +1px → t=1 时 d1=[2.5,12.5] 与 d2=[12.06,22.06] 相交
+		final var unequal = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+				{ "elements": [
+				  { "uuid": "d1", "name": "cube", "from": [304,0,0],   "to": [320,64,160] },
+				  { "uuid": "d2", "name": "cube", "from": [304,0,192], "to": [320,64,352] } ],
+				  "outliner": [
+				    { "name": "men2", "children": ["d1"] },
+				    { "name": "men3", "children": ["d2"] } ] }
+				"""));
+		final var unequalParts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["men2"], "doorZMultiplier": 40.0, "doorAnimationType": "STANDARD" },
+				  { "names": ["men3"], "doorZMultiplier": 1.0,  "doorAnimationType": "STANDARD" } ] }
+				"""));
+		final var unequalBoxes = mtrnext.client.render.BbModelLoader.annotateForTest(unequal, unequalParts);
+		check("异向初始不相交", !unequalBoxes.get(0).intersects(unequalBoxes.get(1), 0, 0, 0, 0));
+		final var overlaps = mtrnext.client.render.BbModelLoader.detectDoorOverlaps(unequalBoxes);
+		check("倍率不等追尾被检出", overlaps.size() == 1);
+		check("报错信息含组名", overlaps.size() == 1
+				&& overlaps.get(0).contains("men2") && overlaps.get(0).contains("men3"));
+
+		// --- 场景 C：ERIDU 真实配置（+11/−11 反向对滑，初始包围盒相交）→ 不报 ---
+		// 用真实实测的 ERIDU 组 Z 跨度：men2 [-56.8, 63.5]、men3 [-59.5, 40.0]（像素）
+		final var eridu = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+				{ "elements": [
+				  { "uuid": "d1", "name": "cube", "from": [304,0,-908], "to": [320,320,1016] },
+				  { "uuid": "d2", "name": "cube", "from": [320,0,-952], "to": [336,320,640] } ],
+				  "outliner": [
+				    { "name": "men2", "children": ["d1"] },
+				    { "name": "men3", "children": ["d2"] } ] }
+				"""));
+		final var eriduParts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD_SLOW" },
+				  { "names": ["men3"], "doorZMultiplier": -11.0, "doorAnimationType": "STANDARD_SLOW" } ] }
+				"""));
+		final var eriduBoxes = mtrnext.client.render.BbModelLoader.annotateForTest(eridu, eriduParts);
+		check("ERIDU 真实几何初始包围盒相交",
+				eriduBoxes.get(0).intersects(eriduBoxes.get(1), 0, 0, 0, 0));
+		check("ERIDU 配置（+11/−11 对滑）不报重叠",
+				mtrnext.client.render.BbModelLoader.detectDoorOverlaps(eriduBoxes).isEmpty());
+
+		// --- 退化：单门 / null ---
+		final var single = mtrnext.client.render.BbModelLoader.annotateForTest(
+				mtrnext.client.render.BbModelLoader.parseForTest(json("""
+						{ "elements": [ { "uuid": "d1", "name": "cube", "from": [0,0,0], "to": [16,16,16] } ],
+						  "outliner": [ { "name": "men2", "children": ["d1"] } ] }
+						""")), eriduParts);
+		check("单门不报", mtrnext.client.render.BbModelLoader.detectDoorOverlaps(single).isEmpty());
+		check("null 输入安全", mtrnext.client.render.BbModelLoader.detectDoorOverlaps(null).isEmpty());
 	}
 
 	/** 浮点近似比较（容差 1e-4） */
