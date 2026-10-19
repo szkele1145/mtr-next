@@ -28,8 +28,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * <b>与 MTR Turbo 的共存</b>：Turbo 的 RenderTrainsMixin 对 render 做
  * @Redirect（NEW HashMap），本 mixin 是 @Inject RETURN——同方法不同注入
  * 类型可共存（与 ANTE 的 @Inject 共存先例同机制），仍需三方实测确认。
+ * <p>
+ * [0.35.1] 目标类改用类字面量 {@code value = mtr.render.RenderTrains.class}
+ * （原 {@code targets = "..."} 字符串）。运行时等价，但 targets 字符串目标下
+ * AP 不解析目标类——注入点写错也编译通过、运行时静默不命中（0.34.2 修的
+ * 正是这类"永不命中"）。改用类引用后 AP 真正解析 YMTR 目标类并校验注入点，
+ * 把静默失效提前成编译错误。目标类经 javap 实证为 public class。
  */
-@Mixin(targets = "mtr.render.RenderTrains", remap = false)
+@Mixin(value = mtr.render.RenderTrains.class, remap = false)
 public abstract class RenderTrainsPreviewMixin {
 
 	// [0.34.2 修复·完整链] 三层证据：

@@ -22,8 +22,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * mixin 经宿主的 savedRailBase 字段转型 mtr.data.Siding 后直接读 .id
  * （public 字段无需 accessor）——编组存储按这个长期 id 键控，
  * 界面重开/重启世界均稳定。
+ * <p>
+ * [0.35.1] 目标类改用类字面量 {@code value = mtr.screen.SidingScreen.class}
+ * （原 {@code targets = "..."} 字符串）。运行时等价，但 targets 字符串目标下
+ * AP 不解析目标类——注入点写错也编译通过、运行时静默不命中。改用类引用后
+ * AP 真正解析 YMTR 目标类并校验注入点，把静默失效提前成编译错误。
+ * 目标类经 javap 实证为 public class。
  */
-@Mixin(targets = "mtr.screen.SidingScreen", remap = false)
+@Mixin(value = mtr.screen.SidingScreen.class, remap = false)
 public abstract class SidingScreenMixin extends Screen {
 
 	protected SidingScreenMixin(net.minecraft.network.chat.Component title) {

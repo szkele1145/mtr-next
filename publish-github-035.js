@@ -3,35 +3,34 @@ const https = require('https');
 const crypto = require('crypto');
 
 const tok = fs.readFileSync('F:\\vibe coding工程\\sfx\\.ghtoken', 'utf-8').trim();
-const jarPath = 'F:\\vibe coding工程\\mtr-next\\build\\libs\\mtr-next-0.35.0-1.20.1-fabric.jar';
+const jarPath = 'F:\\vibe coding工程\\mtr-next\\build\\libs\\mtr-next-0.35.1-1.20.1-fabric.jar';
 const fileBuf = fs.readFileSync(jarPath);
-const fileName = 'mtr-next-0.35.0-1.20.1-fabric.jar';
-const tag = 'v0.35.0';
+const fileName = 'mtr-next-0.35.1-1.20.1-fabric.jar';
+const tag = 'v0.35.1';
 
 const notes = [
-  '## MTR Next 0.35.0 - 上游实证门动画 + 尺度/UV 修复',
+  '## MTR Next 0.35.1 - mixin 注入点编译期校验加固',
   '',
-  '本版依据 MTR 4.x 上游 MIT 源码（`Minecraft-Transit-Railway/Minecraft-Transit-Railway`，master 分支）逐行比对后实施。',
+  '### 修复（静默失效类）',
   '',
-  '### 修复（两项均影响所有 4.0 格式车包的显示）',
+  '- 4 个 mixin（`CustomResourcesReloadMixin` / `ItemBlockClickingBaseMixin` / `RenderTrainsPreviewMixin` / `SidingScreenMixin`）的目标类由 `targets = "字符串"` 改为 `value = 类字面量`。',
   '',
-  '- **bbmodel 坐标未做 /16 尺度换算**：上游 `BlockbenchElement.setModelPart` 明确 "Normalize dimensions (16 Blockbench units = 1 Minecraft block)"，此前车体渲染比实际大 16 倍。',
-  '- **UV 归一化硬编码 /24**：bbmodel 的 UV 除数应为模型自身 `resolution`（实测 ERIDU 四个模型为 512/128/24/64）。旧代码让车体（resolution 512，UV 最大 u=384 / v=448）贴图严重越界错位。',
+  '两者运行时等价，但 Mixin AP 对 `targets` 字符串目标**不解析目标类**——注入方法名/描述符写错也照样编译通过，运行时静默不命中（0.34.2 修的轨道预览正是这类"永不命中"）。改为类字面量后 AP 真正解析 YMTR 目标类并校验注入点，把这类缺陷从运行时静默失效提前为编译错误。',
   '',
-  '### 新增',
+  '目标类经 javap 实证均为 public class（YMTR 3.6.4.2 发布 jar）：`mtr.client.CustomResources`、`mtr.item.ItemBlockClickingBase`、`mtr.render.RenderTrains`、`mtr.screen.SidingScreen`。`remap = false` 保留——`mtr.*` 是 YMTR 自有包名，不被 intermediary 重映射。',
   '',
-  '- `DoorAnimation4x`：上游 `DoorAnimationType` 12 值逐分支移植（含 3.x 没有的 `PLUG_SLOW_2` / `PLUG_SLOW_3`），签名带 `flipped`，`copySign` 语义与上游一致。',
-  '- 门动画接入渲染：`drawBoxFaces` 扩展为 X/Z 双轴位移，`renderCar` 按 `parts[]` 的门倍率 + 上游曲线驱动门盒（塞拉门 X 外摆 + Z 滑动，滑门 Z 滑动）；非门盒行为不变。编组预览同步（预览门取全开态）。',
-  '- 门归属判定与上游 `isDoor()` 对齐：`doorXMultiplier != 0 || doorZMultiplier != 0`，按 outliner 组名匹配 `parts[].names`。',
+  '### 验证',
   '',
-  '### 文档',
+  '- 编译通过即证明 4 个注入点的签名全部正确（此前无任何编译期保障）。',
+  '- 构建日志的 4 条 "Mixin target ... is public and should be specified in value" 警告全部消除。',
+  '- `mtr-next.refmap.json` 内容不变（RailPreview 的 Mojmap→intermediary 桥接完好）。',
+  '- ParserSelfTest 155/155 全绿。',
   '',
-  '- `docs/door-animation-audit.md` §4 四个开放问题全部关闭：倍率单位=像素（渲染时 /16）、`isDoor` 判定、`flipped` 来源（`positionDefinitions`）、X 轴曲线存在性，均附上游文件行号。',
-  '- 新增 `docs/_upstream/`（上游 MIT 源码快照，仅供比对，不参与构建）。',
+  '### 0.35.0 回顾（上一版）',
   '',
-  '### 测试',
-  '',
-  '- ParserSelfTest 98 → 155 全绿（门曲线 40+ 项、尺度/UV 13 项、门标注 17 项，期望值由上游分支手算锁定）。',
+  '- bbmodel 坐标 /16 尺度换算（上游 `BlockbenchElement`："16 Blockbench units = 1 Minecraft block"）——此前车体比实际大 16 倍。',
+  '- UV 归一化除数改用 bbmodel 自身 `resolution`（实测 ERIDU 为 512/128/24/64）——此前硬编码 /24 让车体贴图 UV 严重越界错位。',
+  '- 门动画接入渲染（上游 `DoorAnimationType` 12 值移植 + X/Z 双轴位移）。',
   '',
   '> 渲染效果需图形客户端肉眼验证（见 `docs/client-verification-boundary.md` 记录的验证边界）。',
   '',
@@ -75,7 +74,7 @@ function api(method, path, bodyObj) {
     console.log('TAG_MISSING -> creating');
     const r = await api('POST', '/repos/szkele1145/mtr-next/git/refs', {
       ref: 'refs/tags/' + tag,
-      sha: '3ee41d9cf29ba3eadd8ef1c3dcae34ad7c20c96a'
+      sha: '__HEAD_SHA__'
     });
     console.log('TAG_CREATED ' + r.ref);
   }
@@ -88,7 +87,7 @@ function api(method, path, bodyObj) {
   } catch (e) {
     rel = await api('POST', '/repos/szkele1145/mtr-next/releases', {
       tag_name: tag,
-      name: 'MTR Next 0.35.0 - 上游实证门动画 + 尺度/UV 修复',
+      name: 'MTR Next 0.35.1 - mixin 注入点编译期校验加固',
       body: notes,
       draft: false,
       prerelease: false

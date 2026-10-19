@@ -25,8 +25,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * 与 4.x 的差异：4.x 把状态放 ItemNodeModifierBase 静态字段+MinecraftClientData，
  * 3.x 走 NBT（更稳——切手持/掉落不丢）。我们直接镜像 3.x 的 NBT 约定，
  * 不需要自己存状态，只做"旁路快照"。
+ * <p>
+ * [0.35.1] 目标类改用类字面量 {@code value = mtr.item.ItemBlockClickingBase.class}
+ * （原 {@code targets = "..."} 字符串）。运行时等价，但 targets 字符串目标下
+ * AP 不解析目标类——注入点写错也编译通过、运行时静默不命中。改用类引用后
+ * AP 真正解析 YMTR 目标类并校验注入点，把静默失效提前成编译错误。
+ * 目标类经 javap 实证为 public class。
  */
-@Mixin(targets = "mtr.item.ItemBlockClickingBase", remap = false)
+@Mixin(value = mtr.item.ItemBlockClickingBase.class, remap = false)
 public abstract class ItemBlockClickingBaseMixin {
 
 	/**
