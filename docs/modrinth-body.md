@@ -1,4 +1,4 @@
-## Feature Matrix (0.34.2)
+﻿## Feature Matrix (0.34.3)
 
 | Feature | Status |
 |---|---|
@@ -6,7 +6,7 @@
 | **4.0-format vehicle packs** | Full 3-level schema: geometry / bogies / coupling faces (gangway+barrier) / multi-model layers / legacy fields |
 | **Multi-model layer rendering** | `VehicleResource.models` iterates every layer; each layer binds its own `textureResource` buffer. Train bodies and formation preview no longer drop all-but-one layer (old code only drew `models.get(0)`) |
 | **Custom formations** | Full pipeline - formation editor on the siding screen: pick cars, head-to-head flips (per-car and Flip All), coupling-face validation with visible rejection feedback, pack-color swatch icons, selected-vehicle detail bar, paginated lists on both sides |
-| **Vehicle rendering** | bbmodel native per-face UV (no CubeListBuilder bake): each face drawn with its own bbmodel UV, no overlapping boxes, no 6× vertices, through YMTR's own train rendering pipeline |
+| **Vehicle rendering** | bbmodel native per-face UV (no CubeListBuilder bake): each face drawn with its own bbmodel UV, no overlapping boxes, no 6脳 vertices, through YMTR's own train rendering pipeline |
 | **Door animation** | Smooth interpolation - door parts slide at real door-mechanism rates (open 0.5/s, close 0.8/s), per-train state, baked into the quad render path |
 | **Connection faces** | Gangway (bellows) and barrier (end walls) rendered procedurally from pack properties - side, top and bottom textures |
 | **BVE sound** | **Every key of BveTs/BveTs sound.cfg plays live (case-insensitive marker)**: 12 events - Motor (speed-tabled pitch/volume), Brake (speed-tabled, layered), Run, Flange, Joint (node-pass probability), Brake-release vent, Departure brake-vent (standstill-to-moving edge), Emergency (rapid-decel edge), Door Open, Door Close (real closing-edge detection), constant Noise, brake Shoe |
