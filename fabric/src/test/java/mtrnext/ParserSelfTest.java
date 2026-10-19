@@ -30,11 +30,64 @@ public final class ParserSelfTest {
 		testSpeedTable();
 		testFormationRules();
 		testVehicleResource();
+		testPropertiesParts();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
 			System.exit(1);
 		}
+	}
+
+	/**
+	 * [0.34.3] 4.0 properties parts[] 数据面解析。
+	 * <p>
+	 * 实测 ERIDU 包的 doorZMultiplier：men2=+11.0 / men3=−11.0（左右符号相反）。
+	 * 缺省语义、畸形部件隔离、names[] 提取全部回归。
+	 */
+	private static void testPropertiesParts() {
+		System.out.println("[Properties4xLoader.parseParts]");
+
+		// --- ERIDU 实测结构：两个门部件 + 一个显示器部件 ---
+		final com.google.gson.JsonObject root = json("""
+				{ "parts": [
+				  { "names": ["men2"], "positionDefinitions": ["71e75d38"], "condition": "NORMAL",
+				    "renderStage": "INTERIOR", "type": "NORMAL", "doorXMultiplier": 0.0, "doorZMultiplier": 11.0,
+				    "doorAnimationType": "STANDARD_SLOW" },
+				  { "names": ["men3"], "condition": "NORMAL", "renderStage": "EXTERIOR", "type": "NORMAL",
+				    "doorXMultiplier": 0.0, "doorZMultiplier": -11.0, "doorAnimationType": "STANDARD_SLOW" },
+				  { "names": ["lcdp_s","lcdp_z_1"], "condition": "DOORS_OPENED", "renderStage": "EXTERIOR",
+				    "type": "DISPLAY", "doorXMultiplier": 0.0, "doorZMultiplier": 0.0 } ] }
+				""");
+		final var parts = mtrnext.client.render.Properties4xLoader.parseParts(root);
+		check("解析出 3 个部件", parts.size() == 3);
+		check("men2 names 落位", parts.get(0).names.size() == 1 && "men2".equals(parts.get(0).names.get(0)));
+		check("men2 doorZMultiplier +11.0", parts.get(0).doorZMultiplier == 11.0F);
+		check("men3 doorZMultiplier -11.0 (与 men2 反号)", parts.get(1).doorZMultiplier == -11.0F);
+		check("STANDARD_SLOW 落位", "STANDARD_SLOW".equals(parts.get(0).doorAnimationType));
+		check("DISPLAY 条件 DOORS_OPENED", "DISPLAY".equals(parts.get(2).type)
+				&& "DOORS_OPENED".equals(parts.get(2).condition));
+		check("多 names 提取", parts.get(2).names.size() == 2);
+		check("缺省 doorXMultiplier=0", parts.get(2).doorXMultiplier == 0.0F);
+
+		// --- 缺省值语义 ---
+		final var min = mtrnext.client.render.Properties4xLoader.parseParts(json(
+				"{\"parts\":[{\"names\":[\"x\"]}]}"));
+		check("缺省动画类型 STANDARD", "STANDARD".equals(min.get(0).doorAnimationType));
+		check("缺省 condition NORMAL", "NORMAL".equals(min.get(0).condition));
+		check("缺省 renderStage EXTERIOR", "EXTERIOR".equals(min.get(0).renderStage));
+		check("缺省 type NORMAL", "NORMAL".equals(min.get(0).type));
+
+		// --- 畸形隔离：数组内非对象元素跳过，其余部件存活 ---
+		final var mixed = mtrnext.client.render.Properties4xLoader.parseParts(json(
+				"{\"parts\":[\"junk\",null,{\"names\":[\"ok\"]},42]}"));
+		check("畸形部件跳过 -> 1 存活", mixed.size() == 1 && "ok".equals(mixed.get(0).names.get(0)));
+
+		// --- 兜底：无 parts / 非数组 / null ---
+		check("无 parts -> 空表", mtrnext.client.render.Properties4xLoader.parseParts(json("{}")).isEmpty());
+		check("parts 非数组 -> 空表", mtrnext.client.render.Properties4xLoader.parseParts(
+				json("{\"parts\":\"oops\"}")).isEmpty());
+		check("names 非数组忽略 -> 部件仍创建", mtrnext.client.render.Properties4xLoader.parseParts(
+				json("{\"parts\":[{\"names\":\"notarray\"}]}")).size() == 1);
 	}
 
 	/**

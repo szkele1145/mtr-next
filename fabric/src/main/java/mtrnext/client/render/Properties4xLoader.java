@@ -8,6 +8,7 @@ import net.minecraft.server.packs.resources.ResourceManager;
 
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -56,6 +57,7 @@ public final class Properties4xLoader {
 					manager.getResource(id).get().open(), StandardCharsets.UTF_8)) {
 				final JsonObject root = JsonParser.parseReader(r).getAsJsonObject();
 				props.modelYOffset = dbl(root, "modelYOffset", 1.0);
+				props.parts = parseParts(root);
 
 				props.gangwayInnerSide = tex(root, "gangwayInnerSideResource");
 				props.gangwayInnerTop = tex(root, "gangwayInnerTopResource");
@@ -90,9 +92,72 @@ public final class Properties4xLoader {
 		return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : "";
 	}
 
+	/** 读字符串字段（缺失或空串都回退缺省——parts 枚举字段的容错语义） */
+	private static String str(JsonObject o, String key, String def) {
+		final String v = tex(o, key);
+		return v.isEmpty() ? def : v;
+	}
+
+	/**
+	 * [0.34.3] 4.0 properties parts[] 解析（纯数据层）。
+	 * <p>
+	 * 实测 ERIDU 包 42 个部件带非零门倍率（docs/mtr4-pack-format.md §3）：
+	 * {@code men2} doorZMultiplier=+11.0、{@code men3}=−11.0（左右门符号相反）。
+	 * parts[].names 匹配 bbmodel <b>outliner 分组名</b>（非 element.name——
+	 * element.name 全是 cube/cude，门信息根本不在那里）。
+	 * <p>
+	 * <b>只解析不消费</b>：倍率→位移的换算单位（像素/格）与左右符号约定
+	 * 尚未经 MTR 4.x 上游确认（docs/door-animation-audit.md §4），渲染端
+	 * 接入被有意推迟——先让数据面可回归测试。
+	 * <p>
+	 * public 是为离线自测（ParserSelfTest）可直接喂 JSON，无需 ResourceManager。
+	 */
+	public static List<PartInfo> parseParts(JsonObject root) {
+		if (!root.has("parts") || !root.get("parts").isJsonArray()) {
+			return java.util.Collections.emptyList();
+		}
+		final List<PartInfo> out = new java.util.ArrayList<>();
+		for (final com.google.gson.JsonElement el : root.getAsJsonArray("parts")) {
+			if (el == null || !el.isJsonObject()) {
+				continue; // 畸形部件跳过，不让整个 properties 报废
+			}
+			final JsonObject p = el.getAsJsonObject();
+			final PartInfo info = new PartInfo();
+			if (p.has("names") && p.get("names").isJsonArray()) {
+				for (final com.google.gson.JsonElement n : p.getAsJsonArray("names")) {
+					if (n != null && n.isJsonPrimitive()) {
+						info.names.add(n.getAsString());
+					}
+				}
+			}
+			info.doorXMultiplier = (float) dbl(p, "doorXMultiplier", 0.0);
+			info.doorZMultiplier = (float) dbl(p, "doorZMultiplier", 0.0);
+			info.doorAnimationType = str(p, "doorAnimationType", "STANDARD");
+			info.condition = str(p, "condition", "NORMAL");
+			info.renderStage = str(p, "renderStage", "EXTERIOR");
+			info.type = str(p, "type", "NORMAL");
+			out.add(info);
+		}
+		return java.util.Collections.unmodifiableList(out);
+	}
+
+	/** 4.0 properties parts[] 单个部件的数据面（门倍率/条件/渲染阶段） */
+	public static final class PartInfo {
+		/** 匹配 outliner 分组名 */
+		public final java.util.List<String> names = new java.util.ArrayList<>();
+		public float doorXMultiplier = 0.0F;
+		public float doorZMultiplier = 0.0F;
+		public String doorAnimationType = "STANDARD";
+		public String condition = "NORMAL";
+		public String renderStage = "EXTERIOR";
+		public String type = "NORMAL";
+	}
+
 	/** 连接面渲染属性（gangway/barrier 双组，程序化几何参数 + 贴图） */
 	public static final class GangwayProperties {
 		public double modelYOffset = 1.0;
+		/** [0.34.3] parts[] 数据面（门倍率/条件/阶段；渲染端暂不消费） */
+		public List<PartInfo> parts = java.util.Collections.emptyList();
 		public String gangwayInnerSide = "";
 		public String gangwayInnerTop = "";
 		public String gangwayInnerBottom = "";
