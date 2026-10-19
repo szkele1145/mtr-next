@@ -31,6 +31,7 @@ public final class ParserSelfTest {
 		testFormationRules();
 		testVehicleResource();
 		testPropertiesParts();
+		testOutlinerGroupPath();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
@@ -88,6 +89,61 @@ public final class ParserSelfTest {
 				json("{\"parts\":\"oops\"}")).isEmpty());
 		check("names 非数组忽略 -> 部件仍创建", mtrnext.client.render.Properties4xLoader.parseParts(
 				json("{\"parts\":[{\"names\":\"notarray\"}]}")).size() == 1);
+	}
+
+	/**
+	 * [0.34.3] outliner → groupPath 解析 + isDoorByGroup 匹配。
+	 * <p>
+	 * 真实 4.0 包的门归属全在 outliner 组名（element.name 全是 cube），
+	 * parts[].names 匹配组名。用模拟的混合 children 结构回归：
+	 * 嵌套组、uuid 引用、无 outliner 的退化路径。
+	 */
+	private static void testOutlinerGroupPath() {
+		System.out.println("[BbModelLoader.walkOutliner / isDoorByGroup]");
+
+		// --- 模拟 bbmodel：嵌套 outliner + 混合 children ---
+		final com.google.gson.JsonObject root = json("""
+				{ "elements": [
+				  { "uuid": "e1", "name": "cube", "from": [0,0,0], "to": [1,1,1] },
+				  { "uuid": "e2", "name": "cube", "from": [0,0,0], "to": [1,1,1] },
+				  { "uuid": "e3", "name": "cube", "from": [0,0,0], "to": [1,1,1] },
+				  { "uuid": "e4", "name": "door_left_bottom", "from": [0,0,0], "to": [1,1,1] } ],
+				  "outliner": [
+				    { "name": "body", "children": [
+				      { "name": "men2", "children": ["e1", "e2"] } ] },
+				    { "name": "men3", "children": ["e3"] },
+				    "e4" ] }
+				""");
+		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(root);
+		check("4 个盒全部解析", boxes.size() == 4);
+		check("e1 组名链 body→men2", boxes.get(0).groupPath.size() == 2
+				&& "body".equals(boxes.get(0).groupPath.get(0))
+				&& "men2".equals(boxes.get(0).groupPath.get(1)));
+		check("e2 组名链同 e1", boxes.get(1).groupPath.size() == 2
+				&& "men2".equals(boxes.get(1).groupPath.get(1)));
+		check("e3 单层组 men3", boxes.get(2).groupPath.size() == 1
+				&& "men3".equals(boxes.get(2).groupPath.get(0)));
+		check("e4 顶层裸 uuid -> 空组链", boxes.get(3).groupPath.isEmpty());
+
+		// --- isDoorByGroup：parts[].names 匹配祖先组名 ---
+		final var parts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["men2"], "doorZMultiplier": 11.0 },
+				  { "names": ["men3"], "doorZMultiplier": -11.0 } ] }
+				"""));
+		check("men2 组下盒判定为门", mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(0), parts));
+		check("men3 组下盒判定为门", mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(2), parts));
+		check("无组链的 door_left_bottom 走旧启发式", mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(3), parts));
+		check("零倍率部件不参与门判定", !mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(0),
+				mtrnext.client.render.Properties4xLoader.parseParts(json(
+						"{\"parts\":[{\"names\":[\"men2\"],\"doorZMultiplier\":0.0}]}"))));
+		check("parts=null 走旧启发式", mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(3), null));
+		check("box=null 安全返回 false", !mtrnext.client.render.BbModelLoader.isDoorByGroup(null, parts));
+
+		// --- 退化：无 outliner 的 bbmodel（3.x 导出）→ 全部空组链 ---
+		final var noOutliner = mtrnext.client.render.BbModelLoader.parseForTest(json(
+				"{\"elements\":[{\"uuid\":\"x1\",\"name\":\"door\",\"from\":[0,0,0],\"to\":[1,1,1]}]}"));
+		check("无 outliner -> 空组链", noOutliner.get(0).groupPath.isEmpty());
 	}
 
 	/**

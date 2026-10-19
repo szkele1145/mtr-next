@@ -187,6 +187,17 @@ public final class BbModelLoader {
 	}
 
 	/**
+	 * [0.34.3] 测试/离线回归入口：直接从 JsonObject 解析盒列表（跳过 ResourceManager）。
+	 * <p>
+	 * {@code load(manager, path)} 依赖 MC 资源系统无法离线测；此方法把
+	 * {@code buildBoxes} 暴露给 ParserSelfTest，使 outliner → groupPath
+	 * 的解析逻辑可 regression。生产代码不调用。
+	 */
+	public static List<BbBox> parseForTest(JsonObject root) {
+		return buildBoxes(root);
+	}
+
+	/**
 	 * [0.34.3] 组名归属门判定（数据面，渲染端暂不消费）。
 	 * <p>
 	 * 对 4.0 车包：parts[].names 匹配 outliner 组名；带非零门倍率的部件
