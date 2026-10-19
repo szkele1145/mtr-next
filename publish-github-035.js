@@ -74,7 +74,7 @@ function api(method, path, bodyObj) {
     console.log('TAG_MISSING -> creating');
     const r = await api('POST', '/repos/szkele1145/mtr-next/git/refs', {
       ref: 'refs/tags/' + tag,
-      sha: '__HEAD_SHA__'
+      sha: '3380722556d90c61d3210996a7eaff5b78c942a7'
     });
     console.log('TAG_CREATED ' + r.ref);
   }
