@@ -32,6 +32,9 @@ public final class ParserSelfTest {
 		testVehicleResource();
 		testPropertiesParts();
 		testOutlinerGroupPath();
+		testDoorAnimation4x();
+		testBbModelScaleAndUv();
+		testDoorAnnotation();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
@@ -350,6 +353,207 @@ public final class ParserSelfTest {
 		// 移除后长度回落（编组编辑器 Clear 的语义）
 		f.cars.remove(1);
 		check("移除后回 12", f.getTotalLength() == 12.0);
+	}
+
+	/**
+	 * [0.35] 上游 DoorAnimationType 曲线回归。
+	 * <p>
+	 * 基准：Minecraft-Transit-Railway/Minecraft-Transit-Railway（MIT，master）
+	 * {@code fabric/src/main/java/org/mtr/mod/resource/DoorAnimationType.java}。
+	 * 期望值由上游分支逐条手算得出，锁定移植一致性。
+	 */
+	private static void testDoorAnimation4x() {
+		System.out.println("[DoorAnimation4x（上游 DoorAnimationType 移植）]");
+		final mtrnext.client.render.DoorAnimation4x std = mtrnext.client.render.DoorAnimation4x.STANDARD;
+		final mtrnext.client.render.DoorAnimation4x stdSlow = mtrnext.client.render.DoorAnimation4x.STANDARD_SLOW;
+		final mtrnext.client.render.DoorAnimation4x constant = mtrnext.client.render.DoorAnimation4x.CONSTANT;
+		final mtrnext.client.render.DoorAnimation4x plugFast = mtrnext.client.render.DoorAnimation4x.PLUG_FAST;
+		final mtrnext.client.render.DoorAnimation4x plugSlow = mtrnext.client.render.DoorAnimation4x.PLUG_SLOW;
+		final mtrnext.client.render.DoorAnimation4x plugSlow2 = mtrnext.client.render.DoorAnimation4x.PLUG_SLOW_2;
+		final mtrnext.client.render.DoorAnimation4x plugSlow3 = mtrnext.client.render.DoorAnimation4x.PLUG_SLOW_3;
+
+		// --- 零倍率 -> 零位移（上游 multiplier==0 直接返回 0） ---
+		check("STANDARD 零倍率 X=0", std.getDoorAnimationX(0.0F, false, 0.5F) == 0.0F);
+		check("STANDARD 零倍率 Z=0", std.getDoorAnimationZ(0.0F, false, 0.5F, true) == 0.0F);
+
+		// --- STANDARD / STANDARD_SLOW：Z 位移 = smoothEnds(0, max, 0, 0.5, t)
+		//     （余弦缓动，t=0.25 恰好中点 -> max/2；t>=0.5 饱和到 max） ---
+		check("STANDARD Z(t=0.25)=5.5", near(std.getDoorAnimationZ(11.0F, false, 0.25F, true), 5.5F));
+		check("STANDARD Z(t=0.5)=11", near(std.getDoorAnimationZ(11.0F, false, 0.5F, true), 11.0F));
+		check("STANDARD Z(t=1)=11", near(std.getDoorAnimationZ(11.0F, false, 1.0F, true), 11.0F));
+		check("STANDARD Z(t=0)=0", near(std.getDoorAnimationZ(11.0F, false, 0.0F, true), 0.0F));
+		check("STANDARD_SLOW Z(t=0.25)=5.5", near(stdSlow.getDoorAnimationZ(11.0F, false, 0.25F, true), 5.5F));
+		// 负倍率 -> 反向滑动（ERIDU men3 z=-11）
+		check("STANDARD 负倍率 Z(t=1)=-11", near(std.getDoorAnimationZ(-11.0F, false, 1.0F, true), -11.0F));
+
+		// --- CONSTANT：Z = 倍率 × clamp(t/0.5) ---
+		check("CONSTANT Z(t=0.25)=5.5", near(constant.getDoorAnimationZ(11.0F, false, 0.25F, true), 5.5F));
+		check("CONSTANT Z(t=0.5)=11", near(constant.getDoorAnimationZ(11.0F, false, 0.5F, true), 11.0F));
+		check("CONSTANT Z(t=1) 饱和=11", near(constant.getDoorAnimationZ(11.0F, false, 1.0F, true), 11.0F));
+
+		// --- PLUG 类：X 外摆 ---
+		// PLUG_FAST/PLUG_SLOW_2/PLUG_SLOW_3: time<0.05 -> t*20*mult+0.05；否则 mult+0.05
+		check("PLUG_FAST X(t=0)=0.05", near(plugFast.getDoorAnimationX(11.0F, false, 0.0F), 0.05F));
+		check("PLUG_FAST X(t=0.05)=11.05", near(plugFast.getDoorAnimationX(11.0F, false, 0.05F), 11.05F));
+		check("PLUG_FAST X(t=1)=11.05", near(plugFast.getDoorAnimationX(11.0F, false, 1.0F), 11.05F));
+		check("PLUG_SLOW_3 X(t=1)=11.05", near(plugSlow3.getDoorAnimationX(11.0F, false, 1.0F), 11.05F));
+		check("PLUG_SLOW_2 X(t=1)=11.05", near(plugSlow2.getDoorAnimationX(11.0F, false, 1.0F), 11.05F));
+		// PLUG_SLOW: smoothEnds(0.05, mult+0.05, 0, 0.1, t) -> 起点≈0.05
+		check("PLUG_SLOW X(t=0)≈0.05", near(plugSlow.getDoorAnimationX(11.0F, false, 0.0F), 0.05F, 0.02F));
+		check("PLUG_SLOW X(t=1)=11.05", near(plugSlow.getDoorAnimationX(11.0F, false, 1.0F), 11.05F, 0.05F));
+		// 非塞拉门 X 恒 0
+		check("STANDARD X 恒 0", std.getDoorAnimationX(11.0F, false, 0.5F) == 0.0F);
+		check("CONSTANT X 恒 0", constant.getDoorAnimationX(11.0F, false, 0.5F) == 0.0F);
+
+		// --- flipped 语义：copySign(abs, (flipped?-1:1)*mult) ---
+		// 正倍率 + flipped -> 整体反号
+		check("flipped 反号(STANDARD Z)",
+				near(std.getDoorAnimationZ(11.0F, false, 1.0F, true), -std.getDoorAnimationZ(11.0F, true, 1.0F, true)));
+		check("flipped 反号(PLUG_FAST X)",
+				near(plugFast.getDoorAnimationX(11.0F, false, 1.0F), -plugFast.getDoorAnimationX(11.0F, true, 1.0F)));
+		// 负倍率 + flipped -> 变正
+		check("负倍率+flipped 变正",
+				near(std.getDoorAnimationZ(-11.0F, true, 1.0F, true), 11.0F));
+
+		// --- PLUG_Z 分段：PLUG_SLOW_2/3 的 smoothEnds 区间不同 ---
+		// PLUG_SLOW_2: smoothEnds(-max, max, -0.75, 0.75, t) -> t=0 落在区间内，
+		// 余弦中点值 = (start+end)/2 = 0（start=-11, end=11 对称）
+		check("PLUG_SLOW_2 Z(t=0)=0", near(plugSlow2.getDoorAnimationZ(11.0F, false, 0.0F, true), 0.0F, 0.05F));
+		// t>=0.75 饱和到 endValue = +11
+		check("PLUG_SLOW_2 Z(t=1)=11", near(plugSlow2.getDoorAnimationZ(11.0F, false, 1.0F, true), 11.0F));
+		// PLUG_SLOW_3: smoothEnds(-max, max, -1, 1, t) -> t=1 仍在区间内
+		check("PLUG_SLOW_3 Z(t=1)≈11", near(plugSlow3.getDoorAnimationZ(11.0F, false, 1.0F, true), 11.0F, 0.5F));
+
+		// --- 解析：上游枚举名 -> 本地枚举 ---
+		check("parse STANDARD_SLOW", mtrnext.client.render.DoorAnimation4x.parse("STANDARD_SLOW") == stdSlow);
+		check("parse PLUG_SLOW_3", mtrnext.client.render.DoorAnimation4x.parse("PLUG_SLOW_3") == plugSlow3);
+		check("parse 未知 -> STANDARD", mtrnext.client.render.DoorAnimation4x.parse("NO_SUCH") == std);
+		check("parse null -> STANDARD", mtrnext.client.render.DoorAnimation4x.parse(null) == std);
+		check("12 个枚举值齐全", mtrnext.client.render.DoorAnimation4x.values().length == 12);
+	}
+
+	/**
+	 * [0.35] bbmodel 尺度换算 + UV 归一化回归。
+	 * <p>
+	 * 上游依据（MIT 上游 master）：
+	 * {@code BlockbenchElement.setModelPart} —— 注释 "Normalize dimensions
+	 * (16 Blockbench units = 1 Minecraft block)"，返回 Box 坐标全部 /16。
+	 * UV：上游用 bbmodel 自身 resolution（BlockbenchModel.getTextureWidth/Height
+	 * ← BlockbenchResolution），而非固定 24。
+	 */
+	private static void testBbModelScaleAndUv() {
+		System.out.println("[BbModelLoader 尺度/UV]");
+
+		// 16 BB 像素 = 1 格
+		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+				{ "resolution": { "width": 512, "height": 512 },
+				  "elements": [
+				    { "uuid": "a", "name": "cube", "from": [16,0,32], "to": [32,16,48] } ] }
+				"""));
+		check("解析出 1 个盒", boxes.size() == 1);
+		final var b = boxes.get(0);
+		check("X 起点 16px -> 1 格", near(b.x1, 1.0F));
+		check("X 终点 32px -> 2 格", near(b.x2, 2.0F));
+		check("Y 起点 0px -> 0 格", near(b.y1, 0.0F));
+		check("Y 终点 16px -> 1 格", near(b.y2, 1.0F));
+		check("Z 起点 32px -> 2 格", near(b.z1, 2.0F));
+		check("Z 终点 48px -> 3 格", near(b.z2, 3.0F));
+
+		// UV 归一化除数 = resolution
+		check("uvScaleU = 1/512", near(b.uvScaleU, 1.0F / 512.0F));
+		check("uvScaleV = 1/512", near(b.uvScaleV, 1.0F / 512.0F));
+
+		// 不同 resolution 的模型各自取自己的除数（ERIDU 实测 512/128/24/64）
+		final var r128 = mtrnext.client.render.BbModelLoader.parseForTest(json(
+				"{\"resolution\":{\"width\":128,\"height\":128},\"elements\":[{\"uuid\":\"a\",\"name\":\"cube\",\"from\":[0,0,0],\"to\":[16,16,16]}]}"));
+		check("resolution 128 -> uvScaleU=1/128", near(r128.get(0).uvScaleU, 1.0F / 128.0F));
+
+		// 缺 resolution -> 退化默认值（不崩）
+		final var noRes = mtrnext.client.render.BbModelLoader.parseForTest(json(
+				"{\"elements\":[{\"uuid\":\"a\",\"name\":\"cube\",\"from\":[0,0,0],\"to\":[16,16,16]}]}"));
+		check("缺 resolution 不崩", noRes.size() == 1);
+		check("缺 resolution -> uvScale=1/16", near(noRes.get(0).uvScaleU, 1.0F / 16.0F));
+	}
+
+	/**
+	 * [0.35] 门参数标注回归（组名匹配 + 倍率/动画型写入）。
+	 * <p>
+	 * 上游依据：{@code ModelPropertiesPart.isDoor()} =
+	 * {@code doorXMultiplier != 0 || doorZMultiplier != 0}；门归属由
+	 * parts[].names 匹配模型部件名（4.0 pack 里即 outliner 组名）。
+	 */
+	private static void testDoorAnnotation() {
+		System.out.println("[BbModelLoader 门标注]");
+
+		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+				{ "resolution": { "width": 512, "height": 512 },
+				  "elements": [
+				    { "uuid": "e1", "name": "cube", "from": [304,0,0],  "to": [320,320,1024] },
+				    { "uuid": "e2", "name": "cube", "from": [320,0,0],  "to": [336,320,1024] },
+				    { "uuid": "e3", "name": "cube", "from": [0,0,0],    "to": [16,16,16] } ],
+				  "outliner": [
+				    { "name": "door", "children": [
+				      { "name": "men2", "children": ["e1"] },
+				      { "name": "men3", "children": ["e2"] } ] },
+				    "e3" ] }
+				"""));
+		check("解析出 3 个盒", boxes.size() == 3);
+
+		final var parts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD_SLOW" },
+				  { "names": ["men3"], "doorZMultiplier": -11.0, "doorAnimationType": "STANDARD_SLOW" } ] }
+				"""));
+		final var ann = mtrnext.client.render.BbModelLoader.annotateForTest(boxes, parts);
+		check("标注后仍是 3 个盒", ann.size() == 3);
+
+		// men2 -> z 倍率 +11，动画型 STANDARD_SLOW
+		check("men2 盒 z 倍率=11", near(ann.get(0).doorZMult, 11.0F));
+		check("men2 盒 x 倍率=0", ann.get(0).doorXMult == 0.0F);
+		check("men2 盒动画型=STANDARD_SLOW",
+				ann.get(0).doorAnim == mtrnext.client.render.DoorAnimation4x.STANDARD_SLOW);
+		check("men2 盒是可动画门", ann.get(0).isAnimatedDoor());
+
+		// men3 -> z 倍率 -11
+		check("men3 盒 z 倍率=-11", near(ann.get(1).doorZMult, -11.0F));
+		check("men3 盒动画型=STANDARD_SLOW",
+				ann.get(1).doorAnim == mtrnext.client.render.DoorAnimation4x.STANDARD_SLOW);
+
+		// 无组裸 uuid 的盒 -> 非门
+		check("裸 uuid 盒非门", ann.get(2).doorAnim == null);
+		check("裸 uuid 盒不是可动画门", !ann.get(2).isAnimatedDoor());
+		check("裸 uuid 盒倍率清零", ann.get(2).doorZMult == 0.0F && ann.get(2).doorXMult == 0.0F);
+
+		// 零倍率部件不参与门判定（上游 isDoor()）
+		final var zeroParts = mtrnext.client.render.Properties4xLoader.parseParts(json(
+				"{\"parts\":[{\"names\":[\"men2\"],\"doorZMultiplier\":0.0,\"doorXMultiplier\":0.0}]}"));
+		final var ann2 = mtrnext.client.render.BbModelLoader.annotateForTest(
+				mtrnext.client.render.BbModelLoader.parseForTest(json("""
+						{ "elements": [ { "uuid": "e1", "name": "cube", "from": [0,0,0], "to": [16,16,16] } ],
+						  "outliner": [ { "name": "men2", "children": ["e1"] } ] }
+						""")), zeroParts);
+		check("零倍率部件 -> 非门", ann2.get(0).doorAnim == null);
+
+		// X-only 门（塞拉门）也要被标注（上游 isDoor() 判 X 或 Z）
+		final var xParts = mtrnext.client.render.Properties4xLoader.parseParts(json(
+				"{\"parts\":[{\"names\":[\"men2\"],\"doorXMultiplier\":11.0,\"doorZMultiplier\":0.0,\"doorAnimationType\":\"PLUG_FAST\"}]}"));
+		final var ann3 = mtrnext.client.render.BbModelLoader.annotateForTest(
+				mtrnext.client.render.BbModelLoader.parseForTest(json("""
+						{ "elements": [ { "uuid": "e1", "name": "cube", "from": [0,0,0], "to": [16,16,16] } ],
+						  "outliner": [ { "name": "men2", "children": ["e1"] } ] }
+						""")), xParts);
+		check("X-only 门被标注", ann3.get(0).doorAnim == mtrnext.client.render.DoorAnimation4x.PLUG_FAST);
+		check("X-only 门 x 倍率=11", near(ann3.get(0).doorXMult, 11.0F));
+	}
+
+	/** 浮点近似比较（容差 1e-4） */
+	private static boolean near(float actual, float expected) {
+		return near(actual, expected, 1e-4F);
+	}
+
+	/** 浮点近似比较（自定义容差） */
+	private static boolean near(float actual, float expected, float tol) {
+		return Math.abs(actual - expected) <= tol;
 	}
 
 	private static void check(String name, boolean ok) {

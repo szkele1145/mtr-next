@@ -70,15 +70,32 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			// 缺层跳过不影响其余层。props-only 层由 BbModelLoader.load 的空串
 			// 短路返回空盒表，不会触发 ResourceLocation("") 异常刷屏。
 			for (final VehicleResource.ModelLayer layer : res.models) {
-				final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
-						Minecraft.getInstance().getResourceManager(), layer.modelResource);
+				// [0.35] 门动画需要 parts[]（门倍率/动画型），故用双键缓存的
+				// loadAnnotated（模型 + 属性）——同一 bbmodel 可被不同 properties
+				// 引用，单键缓存会串门参数。
+				final List<BbModelLoader.BbBox> boxes = BbModelLoader.loadAnnotated(
+						Minecraft.getInstance().getResourceManager(), layer.modelResource, layer.propertiesResource);
 				if (boxes == null || boxes.isEmpty()) {
 					continue;
 				}
 				final var vc = vertexConsumers.getBuffer(
 						net.minecraft.client.renderer.RenderType.entityCutoutNoCull(texLocation(layer.textureResource)));
 				for (final BbModelLoader.BbBox box : boxes) {
-					drawBoxFaces(vc, pose, box, box.isDoor ? doorOffset : 0.0F);
+					// [0.35] 门部件按上游 DoorAnimationType 曲线位移：
+					// 倍率单位 = Blockbench 像素（16 像素 = 1 格），曲线值
+					// × 倍率后 /16 转格。X 走塞拉门外摆，Z 走滑门滑动。
+					// 非门部件沿用旧的固定 Z 偏移（3.x 语义，无倍率可依）。
+					if (box.isAnimatedDoor()) {
+						// flipped 恒 false：mtr-next 尚未实现上游 positionDefinitions
+						// 的 positionsFlipped 位置组（上游 ModelPropertiesPart
+						// L649-650 会整体镜像 X/Z 并把 flipped 传进曲线）。
+						// bbmodel 自身不含朝向信息，故此处按未镜像处理。
+						final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, false, doorSlide) / 16.0F;
+						final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, false, doorSlide, open) / 16.0F;
+						drawBoxFaces(vc, pose, box, dx, dz);
+					} else {
+						drawBoxFaces(vc, pose, box, box.isDoor ? doorOffset : 0.0F);
+					}
 				}
 			}
 			matrices.popPose();
@@ -99,55 +116,72 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 * （开放问题记录于 docs/door-animation-audit.md §4），贸然实装会让
 	 * 所有现存车包贴图上下颠倒。 */
 	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
+		drawBoxFaces(vc, pose, box, 0.0F, dz);
+	}
+
+	/**
+	 * [0.35] 逐面绘制一盒六面，支持 X/Z 双轴位移（门动画的横向外摆 + 纵向滑动）。
+	 *
+	 * @param dx X 轴位移（格）。塞拉门（PLUG_*）沿 X 外摆，非塞拉门为 0。
+	 * @param dz Z 轴位移（格）。滑门沿车长方向滑动。
+	 */
+	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dx, float dz) {
 		// bbmodel Y 向下 → MC Y 向上的翻转由 from/to 交换 y 实现
 		final float y1 = -box.y2, y2 = -box.y1;
+		// 门位移：整盒平移（顶点 + 偏移量）
+		final float x1 = box.x1 + dx, x2 = box.x2 + dx;
+		final float z1 = box.z1 + dz, z2 = box.z2 + dz;
 
 		if (box.uvDown != null) {
 			// down 面：从下方看逆时针
 			quad(vc, pose,
-					box.x1, y2, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x2, y2, box.z1 + dz, box.x1, y2, box.z1 + dz,
-					box.uvDown);
+					x1, y2, z2, x2, y2, z2, x2, y2, z1, x1, y2, z1,
+					box.uvDown, box.uvScaleU, box.uvScaleV);
 		}
 		if (box.uvUp != null) {
 			// up 面：从上方看逆时针
 			quad(vc, pose,
-					box.x1, y1, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x2, y1, box.z2 + dz, box.x1, y1, box.z2 + dz,
-					box.uvUp);
+					x1, y1, z1, x2, y1, z1, x2, y1, z2, x1, y1, z2,
+					box.uvUp, box.uvScaleU, box.uvScaleV);
 		}
 		if (box.uvNorth != null) {
 			// north (Z-)：从 -Z 方向看逆时针
 			quad(vc, pose,
-					box.x1, y2, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y1, box.z1 + dz, box.x1, y1, box.z1 + dz,
-					box.uvNorth);
+					x1, y2, z1, x2, y2, z1, x2, y1, z1, x1, y1, z1,
+					box.uvNorth, box.uvScaleU, box.uvScaleV);
 		}
 		if (box.uvSouth != null) {
 			// south (Z+)：从 +Z 方向看逆时针
 			quad(vc, pose,
-					box.x1, y1, box.z2 + dz, box.x2, y1, box.z2 + dz, box.x2, y2, box.z2 + dz, box.x1, y2, box.z2 + dz,
-					box.uvSouth);
+					x1, y1, z2, x2, y1, z2, x2, y2, z2, x1, y2, z2,
+					box.uvSouth, box.uvScaleU, box.uvScaleV);
 		}
 		if (box.uvEast != null) {
 			// east (X+)：从 +X 方向看逆时针
 			quad(vc, pose,
-					box.x2, y1, box.z2 + dz, box.x2, y1, box.z1 + dz, box.x2, y2, box.z1 + dz, box.x2, y2, box.z2 + dz,
-					box.uvEast);
+					x2, y1, z2, x2, y1, z1, x2, y2, z1, x2, y2, z2,
+					box.uvEast, box.uvScaleU, box.uvScaleV);
 		}
 		if (box.uvWest != null) {
 			// west (X-)：从 -X 方向看逆时针
 			quad(vc, pose,
-					box.x1, y1, box.z1 + dz, box.x1, y1, box.z2 + dz, box.x1, y2, box.z2 + dz, box.x1, y2, box.z1 + dz,
-					box.uvWest);
+					x1, y1, z1, x1, y1, z2, x1, y2, z2, x1, y2, z1,
+					box.uvWest, box.uvScaleU, box.uvScaleV);
 		}
 	}
 
-	/** 一面 quad：bbmodel UV 归一化到 24×24 贴图（u1,v1,u2,v2 → 0~1）
+	/** 一面 quad：bbmodel UV 归一化到贴图（u1,v1,u2,v2 → 0~1）
 	 * [0.30] 参数表随 winding 修正同步：v 分量按"y 大 = v 小"（贴图 V 向下）
+	 * [0.35] 归一化除数改为 per-box 的 bbmodel resolution（1/resW、1/resH）——
+	 * 旧实现硬编码 24（MC 方块贴图边长），对 bbmodel 完全错误：实测 ERIDU
+	 * 四个模型 resolution 为 512/128/24/64，除 24 会让 UV 越界（车体
+	 * maxU=384 > 24）→ 贴图错位。resolution 由 BbModelLoader 解析层给出。
 	 */
 	static void quad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
 			float ax, float ay, float az, float bx, float by, float bz,
 			float cx, float cy, float cz, float dx, float dy, float dz,
-			float[] uv) {
-		final float u1 = uv[0] / 24.0F, v1 = uv[1] / 24.0F, u2 = uv[2] / 24.0F, v2 = uv[3] / 24.0F;
+			float[] uv, float scaleU, float scaleV) {
+		final float u1 = uv[0] * scaleU, v1 = uv[1] * scaleV, u2 = uv[2] * scaleU, v2 = uv[3] * scaleV;
 		vc.vertex(pose, ax, ay, az).color(255, 255, 255, 255).uv(u1, v2).endVertex();
 		vc.vertex(pose, bx, by, bz).color(255, 255, 255, 255).uv(u2, v2).endVertex();
 		vc.vertex(pose, cx, cy, cz).color(255, 255, 255, 255).uv(u2, v1).endVertex();

@@ -50,6 +50,65 @@ public final class BbModelLoader {
 		return CACHE.computeIfAbsent(modelResource, k -> parse(manager, k));
 	}
 
+	/**
+	 * [0.35] 按"模型+属性"双键缓存已标注门参数的层。
+	 * <p>
+	 * 同一 bbmodel 可能被多个 vehicle/层以不同 properties_*.json 引用，
+	 * 门倍率/动画型归属 parts[]（properties）而非模型本身——单键会串。
+	 * 渲染器每帧调本方法，匹配结果全走缓存，只在首帧做 O(盒数×parts数) 扫描。
+	 */
+	private static final Map<String, List<BbBox>> ANNOTATED = new ConcurrentHashMap<>();
+
+	public static List<BbBox> loadAnnotated(ResourceManager manager, String modelResource, String propertiesResource) {
+		if (modelResource == null || modelResource.isEmpty()) {
+			return java.util.Collections.emptyList();
+		}
+		return ANNOTATED.computeIfAbsent(modelResource + "|" + propertiesResource,
+				k -> annotate(load(manager, modelResource),
+						propertiesResource == null || propertiesResource.isEmpty()
+								? null : Properties4xLoader.load(manager, propertiesResource).parts));
+	}
+
+	/** [0.35] 把 parts[] 的门参数（倍率/动画型/侧别）写入盒字段；非门盒字段清零 */
+	private static List<BbBox> annotate(List<BbBox> boxes, List<Properties4xLoader.PartInfo> parts) {
+		if (boxes == null) {
+			return null;
+		}
+		for (final BbBox box : boxes) {
+			box.doorXMult = 0;
+			box.doorZMult = 0;
+			box.doorAnim = null;
+			box.doorSide = 0;
+			if (parts == null || box.groupPath.isEmpty()) {
+				continue;
+			}
+			for (final Properties4xLoader.PartInfo p : parts) {
+				if (p.doorXMultiplier == 0.0F && p.doorZMultiplier == 0.0F) {
+					continue; // 非门部件（上游 isDoor() 同判定）
+				}
+				boolean matched = false;
+				for (final String g : box.groupPath) {
+					if (p.names.contains(g)) {
+						matched = true;
+						break;
+					}
+				}
+				if (!matched) {
+					continue;
+				}
+				box.doorXMult = p.doorXMultiplier;
+				box.doorZMult = p.doorZMultiplier;
+				box.doorAnim = DoorAnimation4x.parse(p.doorAnimationType);
+				// 侧别：盒质心 X（MC 格，已镜像）。ERIDU 门组质心 |cx|≈1.25 格；
+				// 阈值 0.05 格内视为中置（两侧门值取大者，保险语义）。
+				final float cx = (box.x1 + box.x2) / 2.0F;
+				box.doorSide = cx < -0.05F ? -1 : cx > 0.05F ? 1 : 0;
+				break;
+			}
+		}
+		return boxes;
+	}
+
 	private static List<BbBox> parse(ResourceManager manager, String modelResource) {
 		try {
 			final ResourceLocation id = new ResourceLocation(modelResource);
@@ -73,6 +132,23 @@ public final class BbModelLoader {
 		if (!root.has("elements") || !root.get("elements").isJsonArray()) {
 			return boxes;
 		}
+		// [0.35] UV 归一化除数 = bbmodel 的 resolution（BB 画布尺寸）。
+		// 实测 4 个模型的贴图均为画布整数倍放大（4096/512=8、4320/24=180、
+		// 8640/64=135），故除 resolution 与除贴图像素尺寸数学等效，但
+		// resolution 解析层即可拿到，无需加载贴图。旧实现硬编码 24
+		// （3.x 方块贴图尺寸），对 bbmodel 完全错误 → 所有贴图 UV 错位。
+		float resW = 16.0F;
+		float resH = 16.0F;
+		if (root.has("resolution") && root.get("resolution").isJsonObject()) {
+			final JsonObject res = root.getAsJsonObject("resolution");
+			// 实测 resolution 形如 {"width":512,"height":512}（BB 画布尺寸）
+			if (res.has("width") && res.get("width").isJsonPrimitive()) {
+				resW = res.get("width").getAsFloat();
+			}
+			if (res.has("height") && res.get("height").isJsonPrimitive()) {
+				resH = res.get("height").getAsFloat();
+			}
+		}
 		// [0.34.3] outliner 解析：element uuid → 祖先分组名链。
 		// 实测 eridudanguei：element.name 无门信息（全是 cube），门归属在
 		// outliner 组名（door/men2/men3...），properties parts[].names 匹配
@@ -87,6 +163,8 @@ public final class BbModelLoader {
 			if (box != null) {
 				final List<String> path = groupPaths.get(str(element, "uuid", ""));
 				box.groupPath = path != null ? path : java.util.List.of();
+				box.uvScaleU = resW <= 0 ? 1.0F : 1.0F / resW;
+				box.uvScaleV = resH <= 0 ? 1.0F : 1.0F / resH;
 				boxes.add(box);
 			}
 		}
@@ -126,12 +204,16 @@ public final class BbModelLoader {
 		final boolean isDoor = name.toLowerCase(java.util.Locale.ROOT).contains("door");
 
 		final BbBox box = new BbBox(isDoor);
-		box.x1 = f(from, 0);
-		box.y1 = f(from, 1);
-		box.z1 = f(from, 2);
-		box.x2 = f(to, 0);
-		box.y2 = f(to, 1);
-		box.z2 = f(to, 2);
+		// [0.35] 尺度换算：16 Blockbench 像素 = 1 MC 格（上游
+		// BlockbenchElement.setModelPart 的 /16 同源）。旧实现把像素值
+		// 当格直接写顶点，车体放大 16 倍——0.29 起的渲染尺度 bug。
+		// 统一在解析层换算，渲染层保持"格"语义，门倍率同链路。
+		box.x1 = f(from, 0) / 16.0F;
+		box.y1 = f(from, 1) / 16.0F;
+		box.z1 = f(from, 2) / 16.0F;
+		box.x2 = f(to, 0) / 16.0F;
+		box.y2 = f(to, 1) / 16.0F;
+		box.z2 = f(to, 2) / 16.0F;
 
 		// rotation + origin（BlockBench 三轴欧拉）
 		if (element.has("rotation")) {
@@ -198,6 +280,16 @@ public final class BbModelLoader {
 	}
 
 	/**
+	 * [0.35] 测试/离线回归入口：把门参数标注到盒上（跳过 ResourceManager）。
+	 * <p>
+	 * {@link #annotate} 是私有的，门归属判定（组名匹配 + 倍率/动画型写入）
+	 * 属纯数据逻辑，可离线回归。生产代码不调用。
+	 */
+	public static List<BbBox> annotateForTest(List<BbBox> boxes, List<Properties4xLoader.PartInfo> parts) {
+		return annotate(boxes, parts);
+	}
+
+	/**
 	 * [0.34.3] 组名归属门判定（数据面，渲染端暂不消费）。
 	 * <p>
 	 * 对 4.0 车包：parts[].names 匹配 outliner 组名；带非零门倍率的部件
@@ -239,9 +331,27 @@ public final class BbModelLoader {
 		/** [0.34.3] element 所在的 outliner 祖先组名链（根→叶；无组 = 空表） */
 		public List<String> groupPath = java.util.List.of();
 		public float[] uvDown, uvUp, uvNorth, uvSouth, uvEast, uvWest;
+		/** [0.35] UV 归一化倒数（1/resolution 宽、1/resolution 高） */
+		public float uvScaleU = 1.0F / 24.0F;
+		public float uvScaleV = 1.0F / 24.0F;
+
+		// ── [0.35] 门动画参数（来自 properties parts[]，单位=像素） ──
+		/** 门 X 倍率（上游 doorXMultiplier，16 像素 = 1 格） */
+		public float doorXMult = 0.0F;
+		/** 门 Z 倍率（上游 doorZMultiplier） */
+		public float doorZMult = 0.0F;
+		/** 门动画曲线类型（null = 非门） */
+		public DoorAnimation4x doorAnim = null;
+		/** 门所在侧：-1=车体左(X 负)、+1=车体右(X 正)、0=中置/不区分 */
+		public int doorSide = 0;
 
 		BbBox(boolean isDoor) {
 			this.isDoor = isDoor;
+		}
+
+		/** [0.35] 是否为可动画门部件（上游 isDoor() 同判定） */
+		public boolean isAnimatedDoor() {
+			return doorAnim != null;
 		}
 	}
 }

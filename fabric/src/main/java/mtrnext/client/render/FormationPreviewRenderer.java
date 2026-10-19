@@ -51,12 +51,12 @@ public final class FormationPreviewRenderer {
 					poseStack.mulPose(com.mojang.math.Axis.YP.rotationDegrees(180));
 				}
 				final Matrix4f pose = poseStack.last().pose();
-				// [0.34] 遍历全部模型层（与 BbModelTrainRenderer 同语义），
-				// 每层各取自己贴图的 buffer；门盒按固定偏移 -0.75F 展示（预览视
-				// 为门已打开，露出车内），非门盒 dz=0。
+				// [0.35] 与 BbModelTrainRenderer 同语义：门动画用上游曲线。
+				// 预览是静态截图语境，门按"完全打开"取值（time=1）；
+				// 非门部件仍沿用旧的固定 Z 偏移（3.x 语义）。
 				for (final VehicleResource.ModelLayer layer : res.models) {
-					final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
-							Minecraft.getInstance().getResourceManager(), layer.modelResource);
+					final List<BbModelLoader.BbBox> boxes = BbModelLoader.loadAnnotated(
+							Minecraft.getInstance().getResourceManager(), layer.modelResource, layer.propertiesResource);
 					if (boxes == null || boxes.isEmpty()) {
 						continue;
 					}
@@ -65,7 +65,13 @@ public final class FormationPreviewRenderer {
 									BbModelTrainRenderer.texLocation(layer.textureResource)));
 					// 与主渲染器共享 winding，避免两处顶点顺序分道扬镳
 					for (final BbModelLoader.BbBox box : boxes) {
-						BbModelTrainRenderer.drawBoxFaces(vc, pose, box, box.isDoor ? -0.75F : 0.0F);
+						if (box.isAnimatedDoor()) {
+							final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, false, 1.0F) / 16.0F;
+							final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, false, 1.0F, true) / 16.0F;
+							BbModelTrainRenderer.drawBoxFaces(vc, pose, box, dx, dz);
+						} else {
+							BbModelTrainRenderer.drawBoxFaces(vc, pose, box, box.isDoor ? -0.75F : 0.0F);
+						}
 					}
 				}
 				poseStack.popPose();

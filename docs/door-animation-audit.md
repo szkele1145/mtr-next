@@ -1,6 +1,9 @@
 # 门动画链路审查
 
-> 2026-10-15 初版；**2026-10-18 依据实测大幅修正**（推翻初版多处判断，见下）。
+> 2026-10-15 初版；**2026-10-18 依据实测大幅修正**（推翻初版多处判断，见下）；
+> **2026-10-20 §4 四个开放问题全部关闭**——已取得 MTR 4.x 上游 MIT 源码并逐行比对，
+> 见 §4b；§5 的 1~3 步已在本版实现（`Properties4xLoader.parseParts` /
+> `BbModelLoader.walkOutliner` / `annotateForTest` / `DoorAnimation4x`），155 项离线回归全绿。
 
 ## 一、3.x 内置渲染器的门动画（不迁移）
 
@@ -94,7 +97,7 @@ final boolean isDoor = name.toLowerCase(Locale.ROOT).contains("door");
 - mtr-next 消费的是 4.0 格式包（`models[]` 含 `modelResource`/`modelPropertiesResource`），
   其参考样本 `eridu-pack` 恰好是元素名无 door 的那一类。
 
-## 四、仍未确认的事项（不得贸然实现）
+## 四、仍未确认的事项（**已于 2026-10-20 全部关闭，见 §4b**）
 
 1. **`doorXMultiplier` / `doorZMultiplier` 的权威语义未确认**：
    这两个字段在 `yomis-mtr`（YMTR 3.6.4.2 源码，版本与 `libs/ymtr-fabric-1.20.1.jar`
@@ -111,17 +114,54 @@ final boolean isDoor = name.toLowerCase(Locale.ROOT).contains("door");
 4. **`drawBoxFaces` 只支持 Z 轴偏移**：其 `dz` 参数作用于全部 6 面的 `z` 分量
    （L105-136）。而 4.0 数据同时含 `doorXMultiplier`，当前渲染路径无法表达 X 轴位移。
 
-## 五、正确的下一步
+## 四b、§4 四个问题的上游定论（2026-10-20 实证）
 
-1. **先取 MTR 4.x 上游**的 `properties` schema 与门动画实现，确认第 4 节 4 个问题。
-   **在上游语义确认前不得改渲染代码**——猜错方向只是把缺陷换个方向继续错。
-2. `Properties4xLoader` 增加 `parts[]` 解析（纯数据，可离线测试）：
-   `names[]` / `doorXMultiplier` / `doorZMultiplier` / `doorAnimationType` / `condition` / `type`。
-3. `BbModelLoader` 解析 `outliner`，为每个 element 记录**祖先分组名**，
-   使 `parts[].names` 能按组名匹配到具体盒（当前只读 `element.name`，永远匹配不上）。
-4. 确认左右映射后，再实现 `doorSlideLeft` / `doorSlideRight` 双通道插值，
-   并按需把偏移从「仅 Z」扩展为 X/Z 双轴。
-5. 扩充 `ParserSelfTest` 覆盖 parts[] 解析与组名归属（`docs/client-verification-boundary.md`
-   允许的离线回归面：解析层是纯数据逻辑）。
+**上游仓库已定位**：`Minecraft-Transit-Railway/Minecraft-Transit-Railway`
+（**MIT 许可**，默认分支 `master`，2026-07-16 有提交）。
+注意：先前尝试的 `MTRDev/MTR` **不存在**（GitHub API 返回 404，
+`api.github.com/users/MTRDev/repos` 只有无关的 `handlebars.js`）。
+上游源码快照存于 `docs/_upstream/`（仅供比对，不参与构建）。
 
-在 1~3 完成前，**不得**仅凭 `element.name` 的 contains 判定就驱动平移。
+逐问回答：
+
+| §4 问题 | 上游定论 | 依据（上游文件:行） |
+|---|---|---|
+| **Q1** 倍率权威语义 | 4.0 权威实现在 MTR 4.x 上游，字段直读上游 `ModelPropertiesPart` schema；`isDoor()` = `doorXMultiplier != 0 \|\| doorZMultiplier != 0` | `ModelPropertiesPart.java:311-312` |
+| **Q2** 倍率单位 | **像素**（Blockbench 像素），渲染时 **/16 转格**。上游三处独立同款换算 | `ModelPropertiesPart.java:241-242`（`getOpenDoorBounds`）、`:524`（`addCube`）、`:536`（`addObjModelPosition`） |
+| **Q3** 左右映射 | 上游**不**用 `doorLeftOpen/RightOpen` 二分；门板靠**倍率符号**区分（ERIDU `men2`=+11 / `men3`=−11 天然对滑）。位移方向 = `copySign(abs曲线值, (flipped ? -1 : 1) * multiplier)`，flipped 来自 `positionDefinitions` 的 `positionsFlipped` | `DoorAnimationType.java:15-28`；`ModelPropertiesPart.java:649-650`（flipped 时 X/Z 整体镜像）、`:347-348` |
+| **Q4** X 轴位移 | 确认存在：塞拉门（`PLUG_FAST`/`PLUG_SLOW`/`PLUG_SLOW_2`/`PLUG_SLOW_3`）沿 **X 外摆** + 沿 **Z 滑动**；其余类型 X 恒 0 | `DoorAnimationType.java:32-43`（`getDoorAnimationXAbsolute`） |
+
+**连带确认的两项（本轮新发现，均为真实缺陷）**：
+
+- **尺度换算**：上游 `BlockbenchElement.setModelPart` 注释明写
+  "Normalize dimensions (16 Blockbench units = 1 Minecraft block)"，返回 `Box` 的
+  六个坐标**全部 /16**。mtr-next 0.34.3 之前**未做此换算** → 车体比实际大 16 倍。
+  （上游 `docs/_upstream/BlockbenchElement.java:51-58`）
+- **UV 归一化除数**：上游用 bbmodel 自身 `resolution`
+  （`BlockbenchModel.getTextureWidth/Height` ← `BlockbenchResolution`），
+  而非固定 24。实测 ERIDU 四个模型 resolution = **512 / 128 / 24 / 64**，
+  `eridudanguei` 的 UV 最大值 u=384、v=448 —— 旧代码硬编码 `/24` 会让 UV
+  **严重越界**（u 最大到 16.0），贴图整体错位。3.x 时代的 `24` 是 MC 方块贴图
+  边长，对 bbmodel 不适用。
+
+## 五、已实现（0.35）
+
+1. `Properties4xLoader.parseParts` 解析 `parts[]`
+   （`names[]`/`doorXMultiplier`/`doorZMultiplier`/`doorAnimationType`/`condition`/`type`）。
+2. `BbModelLoader.walkOutliner` 记录每个 element 的**祖先分组名链**，
+   `annotate` 按组名匹配 parts 并把倍率/动画型写入盒字段。
+3. `DoorAnimation4x` 逐分支移植上游 `DoorAnimationType`（12 个枚举值，
+   含 3.x 没有的 `PLUG_SLOW_2`/`PLUG_SLOW_3`），签名带 `flipped`，
+   `copySign` 语义与上游一致。
+4. `BbModelLoader.buildBox` 坐标 **/16**（上游 `BlockbenchElement` 同源）；
+   UV 除数改为 per-model `resolution`。
+5. `BbModelTrainRenderer.drawBoxFaces` 扩展为 **X/Z 双轴**位移；
+   `renderCar` 按 `isAnimatedDoor()` 走上游曲线，否则沿用旧固定偏移。
+6. `ParserSelfTest` 增至 **155 项**（新增门曲线 40+ 项、尺度/UV 13 项、门标注 17 项）。
+
+**仍开放**：`flipped` 恒为 `false`——mtr-next 尚未实现上游
+`positionDefinitions` 的 `positionsFlipped` 位置组（上游
+`ModelPropertiesPart.java:649-650` 会整体镜像 X/Z 并把 `flipped` 传进曲线）。
+同一模型在正/反方向车头会整体镜像渲染，届时门位移方向需反号。
+另：`flipTextureV` 语义仍未确认（见 §四遗留与 `BbModelTrainRenderer` 注释），
+未贸然实装以免所有车包贴图上下颠倒。
