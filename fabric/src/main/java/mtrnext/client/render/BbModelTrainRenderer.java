@@ -63,10 +63,12 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			final Matrix4f pose = matrices.last().pose();
 
 			// [0.34] 遍历全部模型层。4.0 的 models[] 是"叠放图层"而非变体互斥：
-			// 实测 ERIDU-DG1000A 头车 5 层 = 车体/内饰/LCD/驾驶面板
-			// （证据见 docs/multi-layer-rendering.md）。旧实现只取 models.get(0)，
-			// 多层车包实际只渲染第 0 层（5 层丢 4 层）。每层自带贴图 →
-			// 各取自己的 RenderType/VertexConsumer，缺层跳过不影响其余层。
+			// 实测 ERIDU-DG1000A 头车 5 层 = 1 个 props-only 层（modelResource 空，
+			// 仅承载整车 gangway/barrier 的 properties）+ 车体 + LCD + 驾驶面板 + 高峰,
+			// 各层贴图独立。旧实现只取 models.get(0)，多层车包实际只渲染第 0 层
+			//（5 层丢 4 层）。每层自带贴图 → 各取自己的 RenderType/VertexConsumer，
+			// 缺层跳过不影响其余层。props-only 层由 BbModelLoader.load 的空串
+			// 短路返回空盒表，不会触发 ResourceLocation("") 异常刷屏。
 			for (final VehicleResource.ModelLayer layer : res.models) {
 				final List<BbModelLoader.BbBox> boxes = BbModelLoader.load(
 						Minecraft.getInstance().getResourceManager(), layer.modelResource);
@@ -92,8 +94,9 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 * 观察方向逆时针。UV 对应随顶点交换同步调整。
 	 * 与 FormationPreviewRenderer 共享此方法，避免两处 winding 逻辑分道扬镳。
 	 * [0.34] 注意：层的 {@code flipTextureV} 尚未参与绘制。bbmodel 与 MC 的
-	 * UV 原点同为左上角，故默认 {@code true} 未必意味着需要 v→1-v；该字段
-	 * 语义待客户端证据确认（见 docs/multi-layer-rendering.md），贸然实装会让
+	 * UV 原点同为左上角，故默认 {@code true} 未必意味着需要 v→1-v；实测
+	 * ERIDU-DG1000A 全部层 flipTextureV=true，语义待客户端证据确认
+	 * （开放问题记录于 docs/door-animation-audit.md §4），贸然实装会让
 	 * 所有现存车包贴图上下颠倒。 */
 	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
 		// bbmodel Y 向下 → MC Y 向上的翻转由 from/to 交换 y 实现

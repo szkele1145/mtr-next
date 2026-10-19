@@ -37,8 +37,16 @@ public final class BbModelLoader {
 		CACHE.clear();
 	}
 
-	/** 解析并缓存 bbmodel 的盒列表（null=资源不存在/解析失败） */
+	/** 解析并缓存 bbmodel 的盒列表（null=资源不存在/解析失败；空表=合法但无盒） */
 	public static List<BbBox> load(ResourceManager manager, String modelResource) {
+		if (modelResource == null || modelResource.isEmpty()) {
+			// [0.34.3] props-only 层：实测 ERIDU-DG1000A 的 models[0] 只有
+			// properties（承载整车 gangway/barrier），modelResource 为空串。
+			// 此前会一路走到 new ResourceLocation("") 抛异常 → LOGGER.error
+			// 每帧刷一条，且 computeIfAbsent 对 null 不缓存 → 每帧重演。
+			// 空串短路成空盒表，渲染循环的 isEmpty() 分支自然跳过。
+			return java.util.Collections.emptyList();
+		}
 		return CACHE.computeIfAbsent(modelResource, k -> parse(manager, k));
 	}
 
@@ -148,6 +156,11 @@ public final class BbModelLoader {
 	/**
 	 * bbmodel 盒（原生语义：一盒六面、每面独立 UV）。
 	 * 渲染器按面绘制，门盒整体偏移。
+	 * <p>
+	 * [0.34.3] isDoor 的现行判定（element.name 含 "door"）对 4.0 车包
+	 * 静默失效——门归属在 properties_*.json 的 parts[].names（匹配
+	 * outliner 分组名），见 docs/door-animation-audit.md。本字段保留，
+	 * 待 parts[] 解析接入后由组名归属取代。
 	 */
 	public static final class BbBox {
 		public float x1, y1, z1, x2, y2, z2;
