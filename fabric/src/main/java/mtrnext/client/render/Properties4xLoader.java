@@ -40,6 +40,11 @@ public final class Properties4xLoader {
 	}
 
 	public static GangwayProperties load(ResourceManager manager, String propertiesResource) {
+		// [0.36.0] ConcurrentHashMap 不接受 null key：props-only 层（无 properties）
+		// 会传 null 进来，直接进 computeIfAbsent 会 NPE。
+		if (propertiesResource == null || propertiesResource.isEmpty()) {
+			return new GangwayProperties();
+		}
 		return CACHE.computeIfAbsent(propertiesResource, k -> parse(manager, k));
 	}
 

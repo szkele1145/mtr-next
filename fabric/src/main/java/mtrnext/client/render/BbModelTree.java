@@ -126,6 +126,11 @@ public final class BbModelTree {
 		CACHE.clear();
 	}
 
+	/** 查缓存（不构建） */
+	public static BbModelTree cached(String cacheKey) {
+		return CACHE.get(cacheKey);
+	}
+
 	/** 按 cacheKey 缓存；调用方负责给出稳定的、能唯一标识这份 bbmodel + properties 的键 */
 	public static BbModelTree of(String cacheKey, InputStream stream, float modelYOffset) {
 		final BbModelTree existing = CACHE.get(cacheKey);

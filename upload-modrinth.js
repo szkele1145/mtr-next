@@ -2,60 +2,68 @@ const fs = require('fs');
 const https = require('https');
 const crypto = require('crypto');
 const mr = fs.readFileSync('F:\\vibe coding工程\\sfx\\.mrtoken', 'utf-8').trim();
-const jar = 'F:\\vibe coding工程\\mtr-next\\build\\libs\\mtr-next-0.35.3-1.20.1-fabric.jar';
+const jar = 'F:\\vibe coding工程\\mtr-next\\build\\libs\\mtr-next-0.36.0-1.20.1-fabric.jar';
 const fileBuf = fs.readFileSync(jar);
 const sha512 = 'sha512:' + crypto.createHash('sha512').update(fileBuf).digest('hex');
 const data = {
-  name: 'MTR Next 0.35.3 - 镜像展开（positionsFlipped）+ ERIDU 左半侧齐活',
-  version_number: '0.35.3',
+  name: 'MTR Next 0.36.0 - bbmodel → MC 原生模型树（复刻上游构造过程）',
+  version_number: '0.36.0',
   game_versions: ['1.20.1'],
   loaders: ['fabric'],
   featured: false,
   dependencies: [],
   changelog: [
-    '## 0.35.3 - 镜像展开（positionsFlipped）+ ERIDU 左半侧齐活',
+    '## 0.36.0 - bbmodel → MC 原生模型树（复刻上游构造过程）',
     '',
-    '**核心修复：左半侧车门/车窗此前完全缺失**',
+    '**核心变更：不再手算四边面，改为复刻上游 MTR 4 的构造链**',
     '',
-    '上游 `ModelPropertiesPart.iteratePositions`（L654-656）把位定义的 `positions` 与 `positionsFlipped` **都渲染**：前者 flipped=false，后者 X 取反 + flipped=true，且渲染时绕 Y 轴转 180°（`ModelPropertiesPart.java:364`）。`addBox`（L649-650）同步镜像 X/Z。',
+    '上游 MTR 4 没有「逐面手算」这条路：它把 bbmodel 翻译成 MC 原生的 `ModelPart` 树，再走 `ModelPart.render`。逐项对照上游源码（`BlockbenchOutline` / `GroupTransformations` / `BlockbenchElement` / `ModelPartExtension` / `EntityModelExtension`）后，mtr-next 改为复刻**构造过程**而非**手算结果**。',
     '',
-    '实测 ERIDU 车包（eridudanguei.bbmodel，970 元素）：`men2`/`men3`/`win`/`door` 等顶层组 **几何只建了 +X 半边**（men2 x∈[19,20]px，win 右 24 盒 / 左 0 盒），另一侧完全靠 flipped 副本补齐。',
+    '旧路径丢掉的 bbmodel 语义（全部修复）：',
+    '- 元素 `rotation`（旧：**完全忽略**）→ 现在进入变换链',
+    '- 元素 `origin`（旋转中心）→ 现在是链的一节',
+    '- outliner 嵌套组层级（旧：**扁平化**）→ 现在是 pivot 逐级差分的链',
+    '- `shade` / `mirror_uv` / `inflate` → 按上游语义进 `CubeListBuilder`',
+    '- box-UV 布局 → 由 MC 自己的 `addBox` 计算，与上游同一套代码路径',
     '',
-    '⇒ 0.35.2 及以前：**左半侧车门、车窗、门灯、门地板全部不渲染**。',
+    '**本次修掉的实现缺陷（均对照上游源码逐条核实）**',
+    '- `addElement` 漏减 `modelYOffset*16` **两处**（上游 `BlockbenchElement` L24 / L35）',
+    '- 元素中心坐标未从盒原点出发算',
+    '- 链节点名路径未继承父路径 → bake 后取不到节点（元素全丢）',
+    '- `CustomResourcesReloadMixin` 需一并失效原生树缓存',
     '',
-    '**实现**',
-    '- 新增 `PositionDefinitions4xLoader`：解析 `definition_*.json` → 位定义名 → `PositionGroup{positions, positionsFlipped}`。',
-    '- `Properties4xLoader.PartInfo` 增加 `positionDefinitionNames`。',
-    '- `VehicleResource.ModelLayer` 增加 `positionDefinitionsResource` 字段并解析位定义名列表。',
-    '- `BbModelLoader`：`BbBox` 增加 `topGroup`/`singleSidedGroup`/`mirrorNeeded`/`doorFlipped`；`buildBoxes` 统计各顶层组 X 侧分布；`annotate` 双条件判定镜像（几何单侧 AND 引用含翻转位的位定义）；`loadAnnotated` 增加第三缓存键。',
-    '- `BbModelTrainRenderer`：`drawBoxFaces` 增加 mirror 参数（(x,z)→(−x,−z)，每面 winding 反转）；新增 `drawMirrorPair`（本体 flipped=false、镜像 flipped=true，上游 `copySign(abs,(flipped?-1:1)*mult)` 自动反号）。',
-    '- `FormationPreviewRenderer` 同步镜像逻辑。',
+    '**事实修正（实测推翻旧文档）**',
+    '- MC `CubeListBuilder.mirror(true)` **不改变 UV 区域**，只翻转**顶点顺序**（贴图沿 V 镜像）。旧文档「mirror 改 UV 布局」的说法有误。',
+    '- MC 1.20.1 `ModelPart$Cube` 的六面 box-UV 布局已用**真实 MC 类**实测确证（16³ 盒、u=100,v=200：down=[116..132]×[200..216]、up=[132..148]×[200..216]、west=[100..116]×[216..232]、north=[116..132]×[216..232]、east=[132..148]×[216..232]、south=[148..164]×[216..232]）。',
     '',
-    '**为什么对称组不镜像**',
+    '**新增**',
+    '- `client/render/BbModelTree.java`：bbmodel → MC 原生树（复刻上游全部构造语义）。',
+    '- `client/render/BbModelTreeCache.java`：资源加载 + 缓存（键 = modelResource + propertiesResource）。',
+    '- 离线自测 `BbModelTreeTest`（gradle 任务 `bbModelTreeTest`）：34 项原生树构造语义断言。',
     '',
-    '上游对 `end`/`hand` 等本就左右对称的组也会画 flipped 副本（与对面正本重叠）。mtr-next 用 `singleSidedGroup` 跳过这些组，避免 Z-fighting 与重复面。实测 ERIDU：17/36 个顶层组需镜像。',
+    '**重写**',
+    '- `BbModelTrainRenderer`：门位移 / 翻转位 / 位置实例逐条对齐上游 `ModelPropertiesPart.renderNormal`（L347-364）与 `iteratePositions`（L654-656）。',
+    '- `FormationPreviewRenderer`：预览与实车**共用同一棵树**，两者几何必然一致。',
     '',
     '**验证**',
-    '- 离线自测 PASS=216 FAIL=0（新增 33 条）。',
-    '- 真实 ERIDU 车包端到端：8 个门/窗组全部判为需镜像；`end`/`end_n`/`hand`/`hand_n` 判为双侧组不镜像；`men2` dz=+11 / `men3` dz=−11 与实测一致。',
-    '- 构建 0 警告；jar 83216 B。',
+    '- 离线自测 `parserSelfTest` PASS=243 FAIL=0；`bbModelTreeTest` PASS=34 FAIL=0。',
+    '- 构建 0 错误；jar 100841 B。',
     '',
-    '**0.35.2 回顾**',
-    '- `BbModelLoader.detectDoorOverlaps`：上游 `testDoors` 移植（模拟 5 个时间片检查两扇门是否中途相撞）。',
-    '- `flipTextureV` 定论：不实装是正确的（上游对 bbmodel 不消费此字段）。',
+    '**已知未验证项（诚实标注）**',
+    '- 实际贴图采样 / 光照与透明批次分层 / 上游 `OptimizedModel` 优化渲染路径：均需图形客户端目视，离线无法验证（见 docs/client-verification-boundary.md）。',
     '',
-    'No gameplay changes; parser self-test passes 216/216.'
+    'No gameplay changes; both offline self-test suites pass.'
   ].join('\n'),
   release_channel: 'release',
   project_id: 'jUmZS1kp',
-  file_parts: ['mtr-next-0.35.3-1.20.1-fabric.jar']
+  file_parts: ['mtr-next-0.36.0-1.20.1-fabric.jar']
 };
 const boundary = '----DSHBoundary' + Date.now();
 const chunks = [];
 function str(s) { chunks.push(Buffer.from(s, 'utf8')); }
 function raw(buf) { chunks.push(buf); }
 str('--' + boundary + '\r\nContent-Disposition: form-data; name="data"\r\n\r\n' + JSON.stringify(data) + '\r\n');
-str('--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="mtr-next-0.35.3-1.20.1-fabric.jar"\r\nContent-Type: application/java-archive\r\n\r\n');
+str('--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="mtr-next-0.36.0-1.20.1-fabric.jar"\r\nContent-Type: application/java-archive\r\n\r\n');
 raw(fileBuf);
 str('\r\n--' + boundary + '--\r\n');
 const body = Buffer.concat(chunks);
@@ -66,7 +74,7 @@ const options = {
   path: '/v2/version',
   headers: {
     'Authorization': mr,
-    'User-Agent': 'szkele1145/mtr-next/0.35.3 (contact: szkele1145)',
+    'User-Agent': 'szkele1145/mtr-next/0.36.0 (contact: szkele1145)',
     'Content-Type': 'multipart/form-data; boundary=' + boundary,
     'Content-Length': body.length
   }

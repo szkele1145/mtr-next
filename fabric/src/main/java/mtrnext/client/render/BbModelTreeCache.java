@@ -5,8 +5,6 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 
 import java.io.InputStream;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * [0.35] bbmodel 模型树的资源加载与缓存。
@@ -18,14 +16,10 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class BbModelTreeCache {
 
-	/** key = modelResource + "|" + propertiesResource */
-	private static final Map<String, BbModelTree> TREE_CACHE = new ConcurrentHashMap<>();
-
 	private BbModelTreeCache() {
 	}
 
 	public static void invalidate() {
-		TREE_CACHE.clear();
 		BbModelTree.invalidate();
 		Properties4xLoader.invalidate();
 		PositionDefinitions4xLoader.invalidate();
@@ -33,6 +27,9 @@ public final class BbModelTreeCache {
 
 	/**
 	 * 取（或构建）一个模型层对应的原生模型树。
+	 * <p>
+	 * 缓存由 {@link BbModelTree} 自己持有（键 = modelResource + "|" + propertiesResource），
+	 * 此处不再另建一份表，避免同一棵树被缓存两次。
 	 *
 	 * @return 资源缺失时返回 null（调用方跳过该层）
 	 */
@@ -41,7 +38,7 @@ public final class BbModelTreeCache {
 			return null;
 		}
 		final String key = modelResource + "|" + (propertiesResource == null ? "" : propertiesResource);
-		final BbModelTree cached = TREE_CACHE.get(key);
+		final BbModelTree cached = BbModelTree.cached(key);
 		if (cached != null) {
 			return cached;
 		}
@@ -55,9 +52,7 @@ public final class BbModelTreeCache {
 					Properties4xLoader.load(manager, propertiesResource);
 			final float modelYOffset = (float) props.modelYOffset;
 			try (InputStream stream = manager.getResource(id).get().open()) {
-				final BbModelTree built = BbModelTree.of(key, stream, modelYOffset);
-				TREE_CACHE.put(key, built);
-				return built;
+				return BbModelTree.of(key, stream, modelYOffset);
 			}
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("[bbmodel] 载入失败 {}", modelResource, t);

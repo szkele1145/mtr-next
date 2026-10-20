@@ -48,6 +48,7 @@ public final class BbModelTreeTest {
 		testNestedGroups();
 		testFlatModelFallback();
 		testTopLevelRotationForcedZero();
+		testNullResourceSafety();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
@@ -282,6 +283,25 @@ public final class BbModelTreeTest {
 		final var el = tree.elements.get(0);
 		// 顶层组旋转被丢弃 → 链上不应出现 90° 的 Z 旋转
 		check("顶层组旋转未生效", near(el.holder.zRot, 0.0F, 0.001F));
+	}
+
+	/**
+	 * null 资源安全：props-only 层（无 properties / 无位定义）会让
+	 * {@code propertiesResource} / {@code positionDefinitionsResource} 为 null。
+	 * {@code ConcurrentHashMap.computeIfAbsent(null, …)} 会 NPE —— 必须在
+	 * 加载器入口就短路掉。
+	 */
+	private static void testNullResourceSafety() {
+		System.out.println("[BbModelTree null 资源安全]");
+		final var props = mtrnext.client.render.Properties4xLoader.load(null, null);
+		check("properties=null 不抛异常", props != null);
+		check("properties=null 时 parts 为空", props.parts != null && props.parts.isEmpty());
+		final var props2 = mtrnext.client.render.Properties4xLoader.load(null, "");
+		check("properties=\"\" 不抛异常", props2 != null);
+		final var defs = mtrnext.client.render.PositionDefinitions4xLoader.load(null, null);
+		check("位定义=null 不抛异常", defs != null && defs.isEmpty());
+		final var defs2 = mtrnext.client.render.PositionDefinitions4xLoader.load(null, "");
+		check("位定义=\"\" 不抛异常", defs2 != null);
 	}
 
 	// ------------------------------------------------------------------
