@@ -3,7 +3,9 @@
 > 2026-10-15 初版；**2026-10-18 依据实测大幅修正**（推翻初版多处判断，见下）；
 > **2026-10-20 §4 四个开放问题全部关闭**——已取得 MTR 4.x 上游 MIT 源码并逐行比对，
 > 见 §4b；**2026-10-20 §五c 关闭 `flipped` 开放项**——`positionsFlipped` 镜像
-> 展开已实现（0.35.3），离线回归 **216 项全绿**，真实 ERIDU 车包端到端验证通过。
+> 展开已实现（0.35.3），离线回归 **216 项全绿**，真实 ERIDU 车包端到端验证通过；
+> **2026-10-20 §五d 补齐门时序/闪烁字段**（0.35.4，纯数据层），并修正
+> **`DOOR_MOVE_TIME = 3200`**（此前误设为 500）。离线回归 **243 项全绿**。
 
 ## 一、3.x 内置渲染器的门动画（不迁移）
 
@@ -263,3 +265,94 @@ mtr-next 不实装该字段 = **与上游行为一致**，不是遗漏。
   winding、门位移符号均有上游源码逐行对应，且真实车包验证了判定逻辑，
   但"左半侧车门看起来正确"仍需图形客户端确认
   （见 `docs/client-verification-boundary.md`）。
+
+## 五d、已实现（0.35.4 追加）：门时序窗口与闪烁（数据层）
+
+### 触发线索：上游 schema 的权威字段清单
+
+上游 `modelPropertiesPart.json`（MIT 仓库
+`Minecraft-Transit-Railway/Minecraft-Transit-Railway`，路径
+`buildSrc/src/main/resources/schema/resource/modelPropertiesPart.json`，
+原始 2763 B）列出 **25 个字段**。mtr-next 的 `PartInfo` 此前只读 8 个。
+新增补上的 6 个：
+
+| 字段 | 上游消费点 | 语义 |
+|---|---|---|
+| `renderFromOpeningDoorTime` | `ModelPropertiesPart.java:342` | 开门时的渲染窗口下界（ms） |
+| `renderUntilOpeningDoorTime` | 同上 | 开门时的渲染窗口上界（ms） |
+| `renderFromClosingDoorTime` | `ModelPropertiesPart.java:344` | 关门时的窗口下界（ms） |
+| `renderUntilClosingDoorTime` | 同上 | 关门时的窗口上界（ms） |
+| `flashOnTime` | `ModelPropertiesPart.java:317` | 闪烁周期亮段（ms） |
+| `flashOffTime` | 同上 | 闪烁周期灭段（ms） |
+
+> 此前 `docs/_upstream/modelPropertiesPart.json` 的副本是被 PowerShell
+> 对象化后写坏的 139 B 版本，本版用 `Invoke-WebRequest`（而非
+> `Invoke-RestMethod`）取原始字节重取，并校验长度与 GitHub tree
+> 报告的 size 一致。
+
+### 上游语义
+
+```java
+// ModelPropertiesPart.java:342-345
+if (opening) {
+    shouldRender = renderFromOpeningDoorTime == 0 && renderUntilOpeningDoorTime == 0
+        || Utilities.isBetween(Math.abs(doorValue) * Vehicle.DOOR_MOVE_TIME,
+                               renderFromOpeningDoorTime, renderUntilOpeningDoorTime);
+} else {
+    shouldRender = renderFromClosingDoorTime == 0 && renderUntilClosingDoorTime == 0
+        || Utilities.isBetween(Math.abs(doorValue) * Vehicle.DOOR_MOVE_TIME,
+                               renderFromClosingDoorTime, renderUntilClosingDoorTime);
+}
+
+// ModelPropertiesPart.java:317
+final boolean flashOn = flashOnTime + flashOffTime == 0
+    || (System.currentTimeMillis() % (flashOnTime + flashOffTime)) > flashOffTime;
+// 不闪时：y = Integer.MAX_VALUE（移出视野），不是跳过绘制
+```
+
+### 关键常量修正：`DOOR_MOVE_TIME = 3200`
+
+**此前一直假定门行程是 500 ms——错了。** 上游定义在
+`Transport-Simulation-Core` 仓库（**不在** `Minecraft-Transit-Railway`
+仓库里——那个仓库只有 `fabric/`/`forge/`/`buildSrc/`，core 是独立仓库）：
+
+```
+Transport-Simulation-Core/src/main/java/org/mtr/core/data/Vehicle.java:59
+  public static final int DOOR_MOVE_TIME = 3200;
+```
+
+`isBetween` 语义（`core/tool/Utilities.java:61-63`）：
+`value >= min(v1,v2) && value <= max(v1,v2)`——**倒序区间同样成立**。
+
+已取快照到 `docs/_upstream/core_Vehicle.java` 与 `core_Utilities.java`。
+
+### ERIDU 实测：这些字段确有非零值（39 个非零条目）
+
+| 部件 | 字段 | 值 |
+|---|---|---|
+| `doordengguan_n` | `renderFromOpeningDoorTime` / `renderFromClosingDoorTime` | 100 / 100 |
+| `doordengshan_n` | `renderFromOpeningDoorTime` | 50 |
+| `doordengshan_n` | `flashOnTime` / `flashOffTime` | 500 / 500 |
+| `lcdp_dooryincang` | `renderFromOpeningDoorTime` / `renderFromClosingDoorTime` | 1 / 1 |
+| `lcdp_doorshanshuo` | `flashOnTime` / `flashOffTime` | 800 / 800 |
+
+语义解读：**部件只在门行程落在 [from, until] 毫秒窗口内才渲染**。
+`until = 0` 时窗口是 `[0, from]`（因 `isBetween` 取 min/max）——
+即"门刚开始动的一小段"。典型用途：门灯管只在开门最初 100 ms 显示。
+
+### mtr-next 实现（0.35.4，纯数据层）
+
+- `Properties4xLoader.PartInfo` 增 6 个字段 + 两个判定方法：
+  `shouldRenderAt(doorValue, opening)`、`flashOn(currentTimeMillis)`。
+- `PartInfo.DOOR_MOVE_TIME = 3200.0` 常量（与上游一致）。
+- 离线自测 **PASS=243 FAIL=0**（新增 27 条，含 ERIDU 真实取值）。
+
+### 边界（务必读）
+
+**渲染端尚未接入** `shouldRenderAt` / `flashOn`——本次只做数据层。
+渲染接入需等另一条进行中的渲染重构（bbmodel → MC 原生 `ModelPart`
+树）定型后再做，否则两条渲染路径会打架。
+
+因此 0.35.4 **不发版**：工作区当时含另一会话未完成的渲染重构，
+构建产物会混入未验证代码；且纯数据层改动对用户无可见价值。
+等渲染重构完成、整体验证通过后一并发布。
