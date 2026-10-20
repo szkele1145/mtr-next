@@ -9,6 +9,11 @@
 > **2026-10-20 §五e 记录 0.36.0 发布后的复核结果**，并留一条**尚未修复的真实
 > 偏差**：上游 `getInterpolatedDoorValue` 的 500 ms 门位移插值层未实现
 > （影响 ERIDU 全部 42 个门部件）。
+> **2026-10-20 §五f**：该插值层已在 0.36.2 实现并发布双渠道
+> （Modrinth `SpyfJ7xr` / GitHub `v0.36.2`）；并查明其真实语义——
+> **只在开门↔关门方向翻转时生效**，同方向变化不插值（与直觉相反）。
+> 另留两条待办：`opening` 应由门开度变化方向推导（现用布尔
+> `doorsOpen`）、门时序窗口/闪烁仍未接入渲染。
 
 ## 一、3.x 内置渲染器的门动画（不迁移）
 
@@ -464,6 +469,88 @@ final float centerX = (x + sizeX / 2.0F) / 16.0F;
 **但该字段当前仅被测试断言使用，渲染路径不消费**（渲染由 MC 的
 `ModelPart` 姿态系统处理旋转），因此**不是渲染缺陷**，只是元数据
 与上游 `Box` 语义不符。修复前应先确认 `center` 的用途。
+
+## 五f、0.36.2 发布与插值层的真实语义（2026-10-20 10:17）
+
+### 发布事实
+
+| 渠道 | 标识 | 大小 | sha512 回读 |
+|---|---|---|---|
+| Modrinth | 版本 id `SpyfJ7xr` | 103249 B | ✅ 与本地一致 |
+| GitHub | release `417932491` / 资产 `658022617` / tag `v0.36.2` | 103249 B | ✅ 与本地一致 |
+
+sha512：`3cb2593a27cb8e8ec5f4ea27d78d5b35d0630b1e939a77e884d83e2dd404d40cbe6505679ce978a168996937c7c1509984d75be0fccfd78a0c49858f8f4cb27e`
+
+tag `v0.36.2` → `a390c6a`（测试提交）。此后 0.36.2 的实现提交被 amend
+为 `f8efcc1`（把发布脚本并入），`a390c6a` 仍是其祖先，tag 有效。
+
+验证：`parserSelfTest` PASS=254 FAIL=0；`bbModelTreeTest` PASS=46 FAIL=0；
+构建 0 警告。
+
+### 插值层的真实语义：**只在方向翻转时生效**（与直觉相反）
+
+写回归测试时按直觉写的三条期望全错，实测后按上游真实行为更正。
+关键在 `Interpolation.setValue`：
+
+```java
+public void setValue(double value, boolean startInterpolation) {
+    if (startInterpolation && oldValue != value) {   // ← 只在 startInterpolation 为真时才检查
+        oldValue = getValue();
+        startMillis = System.currentTimeMillis();     // ← startMillis 仅此时更新
+    }
+    latestValue = value;
+}
+```
+
+而 `setAndGet` 的 `startInterpolation` 参数是 `this.opening != opening`
+——**仅在开关方向翻转时为真**。
+
+推论：
+
+1. **同方向连续变化不产生任何过渡**——`startMillis` 不变，
+   `difference` 持续增长，超出 500 ms 后 `getValue()` 直接返回
+   `latestValue`。
+2. **过渡只在开门↔关门方向翻转的那一刻发生**：翻转时
+   `oldValue = getValue()`（当前插值结果），`startMillis = now`，
+   于是从当前值用 500 ms 线性走到新曲线值，**不跳变**。
+3. **首次调用返回 0**（不是曲线值）：初始 `oldValue = 0`、
+   `startMillis = 0`；`setAndGet(v, opening≠初始 opening)` 触发重启，
+   `oldValue = getValue() = 0`，同毫秒内 `getValue()` 返回 `oldValue`。
+   即插值器从 0 起步。
+
+**这正是上游这层插值的意义**：门动画曲线在方向翻转处（如
+`STANDARD_SLOW` 开门↔关门两套分段曲线交替）会跳变，插值层抹平这个跳变。
+
+### mtr-next 与上游的 `opening` 语义差异（尚未修，已记录）
+
+| | 上游 | mtr-next |
+|---|---|---|
+| `opening` 来源 | `getAdjustedDoorMultiplier(...) > 0`（**门运动方向**，`ModelPropertiesPart.java:338`） | `doorsOpen`（**门是否处于打开状态**） |
+
+两者在"门开↔关翻转"时刻都会翻转，故**插值效果等价**；
+但曲线分支选择不完全等价——上游 `STANDARD_SLOW` 的
+`!opening` 分支是**关门专用的分段曲线**（`DoorAnimationType.java:142-151`），
+mtr-next 传 `doorsOpen` 时，门关闭期间（`time = 0`）两条分支都得 0，
+视觉无差；但"门正在关"这一瞬间，若 `doorsOpen` 仍为 true，
+mtr-next 会走开门分支而上游走关门分支。
+
+ERIDU 实测门部件 42 个（`STANDARD` 18 + `STANDARD_SLOW` 24），
+`STANDARD_SLOW` 的关门分段曲线在 mtr-next 当前模型下未被触发。
+
+**待办**：把 `opening` 改为由门开度的**变化方向**推导
+（`doorValue` 相对上一帧上升 = opening，下降 = 关门），
+而不是用布尔 `doorsOpen`。这需要 per-列车的上一帧门开度状态。
+
+### 门时序窗口与闪烁仍未接入渲染
+
+0.35.4 已实现 `PartInfo.shouldRenderAt` / `flashOn`，但 0.36.x 的渲染路径
+**尚未调用它们**——`BbModelTrainRenderer` 目前无条件渲染所有部件。
+上游语义是"部件只在门行程落在 [from, until] 毫秒窗口内才渲染"
+（ERIDU 的 `doordengguan_n` from=100、`doordengshan_n` from=50 +
+flash 500/500、`lcdp_dooryincang` from=1）。
+
+这需要在渲染循环里拿到每帧的 `doorValue` 与 `opening` 方向后调用，
+与上面的 `opening` 语义修复合并处理更合适。
 
 因此 0.35.4 **不发版**：工作区当时含另一会话未完成的渲染重构，
 构建产物会混入未验证代码；且纯数据层改动对用户无可见价值。
