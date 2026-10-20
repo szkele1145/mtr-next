@@ -105,4 +105,7 @@ tasks.register('bbModelTreeTest', JavaExec) {
 	description = '原生模型树自测（bbmodel → ModelPart 构造语义）'
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = 'mtrnext.BbModelTreeTest'
+	// 两个 JavaExec 共享 runtimeClasspath；并发启动时可能互相踩到对方的
+	// classloader（实测偶发 NoClassDefFoundError）。串行化以保证稳定。
+	mustRunAfter tasks.named('parserSelfTest')
 }
