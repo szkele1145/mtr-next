@@ -2,8 +2,8 @@
 
 > 2026-10-15 初版；**2026-10-18 依据实测大幅修正**（推翻初版多处判断，见下）；
 > **2026-10-20 §4 四个开放问题全部关闭**——已取得 MTR 4.x 上游 MIT 源码并逐行比对，
-> 见 §4b；§5 的 1~3 步已在本版实现（`Properties4xLoader.parseParts` /
-> `BbModelLoader.walkOutliner` / `annotateForTest` / `DoorAnimation4x`），155 项离线回归全绿。
+> 见 §4b；**2026-10-20 §五c 关闭 `flipped` 开放项**——`positionsFlipped` 镜像
+> 展开已实现（0.35.3），离线回归 **216 项全绿**，真实 ERIDU 车包端到端验证通过。
 
 ## 一、3.x 内置渲染器的门动画（不迁移）
 
@@ -159,10 +159,8 @@ final boolean isDoor = name.toLowerCase(Locale.ROOT).contains("door");
    `renderCar` 按 `isAnimatedDoor()` 走上游曲线，否则沿用旧固定偏移。
 6. `ParserSelfTest` 增至 **155 项**（新增门曲线 40+ 项、尺度/UV 13 项、门标注 17 项）。
 
-**仍开放**：`flipped` 恒为 `false`——mtr-next 尚未实现上游
-`positionDefinitions` 的 `positionsFlipped` 位置组（上游
-`ModelPropertiesPart.java:649-650` 会整体镜像 X/Z 并把 `flipped` 传进曲线）。
-同一模型在正/反方向车头会整体镜像渲染，届时门位移方向需反号。
+**曾开放、0.35.3 已关闭**：`flipped` 恒为 `false`——mtr-next 当时尚未实现上游
+`positionDefinitions` 的 `positionsFlipped` 位置组。**0.35.3 已实现**，见 §五c。
 
 ### 附：`flipTextureV` 已定论（2026-10-20 上游实证）——**不实装是正确的**
 
@@ -200,3 +198,68 @@ mtr-next 不实装该字段 = **与上游行为一致**，不是遗漏。
 
 > 由此可知上游 `testDoors` 的实际覆盖能力有限：它只能发现"倍率明显配错"的
 > 极端情形，对 ERIDU 这类正确配置无诊断价值。移植保留其语义，不夸大其作用。
+
+## 五c、已实现（0.35.3 追加）：`positionsFlipped` 镜像展开
+
+### 上游语义（逐行实证）
+
+| 上游位置 | 代码 | 语义 |
+|---|---|---|
+| `ModelPropertiesPart.java:654-656` | `iteratePositions(positions, positionsFlipped, cb)`：`positions` → `cb(..., false)`；`positionsFlipped` → `cb(-x, y, z, true)` | **两个列表都渲染**，不是二选一；翻转槽的 X 取反且 `flipped=true` |
+| `ModelPropertiesPart.java:364` | `modelPart.render(..., partDetails.flipped ? (float) Math.PI : 0, ...)` | 翻转副本**绕 Y 轴转 180°** |
+| `ModelPropertiesPart.java:649-650` | `addBox`: `(flipped ? -1 : 1) * minX + x/16`、`(flipped ? 1 : -1) * minZ + z/16` | 包围盒同步镜像 **X 与 Z** |
+| `DoorAnimationType.java:25,29` | `Math.copySign(abs, (flipped ? -1 : 1) * multiplier)` | 门位移方向随 `flipped` **反号** |
+| `DynamicVehicleModel.java:41-62` | `nameToPart.put(blockbenchOutline.getName(), ...)` | 镜像粒度 = **整个顶层 outliner 组** |
+
+刚体绕 Y 轴转 180° 保定向 ⇒ 顶点逐点 `(x,z)→(−x,−z)`，每面的绕向（winding）
+需同步反转，UV 跟面走不变。
+
+### 实测事实（ERIDU 车包）
+
+- `eridudanguei.bbmodel` 970 元素；`men2`/`men3`/`win`/`door` 等顶层组
+  **几何只建了 +X 半边**：`men2` x∈[19,20]px、`men3` x∈[20,21.52]px、
+  `win` 右 24 盒 / 左 0 盒。另一侧完全靠 flipped 副本补齐。
+- ⇒ **0.35.2 及以前左半侧车门/车窗/门灯/门地板全部不渲染**。
+- 189 个 positionDefinitions 中 143 个含非空 `positionsFlipped`，
+  43 个只有 `positionsFlipped`（无正位）。
+- 64 个顶层组引用了含翻转位的位定义，**全部是多记录**（同一 `names`
+  被 NORMAL 位记录与 FLIPPED 位记录各引用一次）；其中 59 组门参数
+  完全一致，6 组不一致的是**不同 properties 文件**的 `condition` 差异
+  （`ON_ROUTE_FORWARDS`/`ON_ROUTE_BACKWARDS`，车头/车尾朝向），
+  分属不同层模型，不是同一部件的两侧。
+- 实测需镜像的顶层组 **17/36**。
+
+### mtr-next 实现
+
+- 新增 `PositionDefinitions4xLoader`：`definition_*.json` → 名字 →
+  `PositionGroup{positions, positionsFlipped}`（`flippedOnly()`/`hasNormal()`）。
+- `Properties4xLoader.PartInfo` 增加 `positionDefinitionNames`。
+- `VehicleResource.ModelLayer` 增加 `positionDefinitionsResource`。
+- `BbModelLoader`：`BbBox` 增 `topGroup`/`singleSidedGroup`/`mirrorNeeded`/
+  `doorFlipped`；`buildBoxes` 统计各顶层组 X 侧分布；`annotate` **双条件**
+  判定镜像；`loadAnnotated` 第三缓存键。
+- `BbModelTrainRenderer.drawBoxFaces(..., mirror)`：镜像时 `(x,z)→(−x,−z)`
+  且每面 winding 反转；`drawMirrorPair`：本体 `flipped=false`、
+  镜像 `flipped=true`（由上游 `copySign` 自动反号）。
+- `FormationPreviewRenderer` 同步。
+
+### 与上游的一处有意偏离：对称组跳过镜像
+
+上游对 `end`/`hand` 等**本就左右对称**的组也会画 flipped 副本，落点与
+对面正本重叠（Z-fighting / 重复面）。mtr-next 用 `singleSidedGroup`
+（该顶层组的盒是否只落在 X 一侧）跳过这些组。
+
+这是**渲染优化取舍，不是语义修正**：重叠副本在视觉上与单份不可区分，
+但会浪费 2× 顶点并引入深度冲突。若日后发现某对称组依赖重叠副本
+（例如两侧 UV 不同），此判定需回退。
+
+### 验证
+
+- 离线自测 **PASS=216 FAIL=0**（新增 33 条）。
+- 真实 ERIDU 车包端到端（`ParserSelfTest.testRealPackMirror`）：
+  8 个门/窗组全部判为需镜像；`end`/`end_n`/`hand`/`hand_n` 判为
+  双侧组不镜像；`men2` dz=+11 / `men3` dz=−11 与实测一致。
+- **边界**：headless 环境无法验证客户端渲染观感——镜像的顶点变换、
+  winding、门位移符号均有上游源码逐行对应，且真实车包验证了判定逻辑，
+  但"左半侧车门看起来正确"仍需图形客户端确认
+  （见 `docs/client-verification-boundary.md`）。
