@@ -132,10 +132,12 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		final Map<String, PositionDefinitions4xLoader.PositionGroup> positions =
 				PositionDefinitions4xLoader.load(manager, layer.positionDefinitionsResource);
 
-		// 上游 ModelPropertiesPart.java:317 —— 闪烁窗口是**层级**属性，
-		// 不随部件变化：flashOn 为假时整层的 y 被推离视野。
+		// 上游 ModelPropertiesPart.java:317 —— 闪烁是 **per-part** 的：
+		// 每条 wrapper 在 toModelPropertiesPartAndPositionDefinition 里
+		// （ModelPropertiesPartWrapper.java:80-105）把自己的 flashOnTime/flashOffTime
+		// 传给新建的 ModelPropertiesPart 实例，renderNormal 读的是本实例字段。
+		// ⇒ 每个部件用自己的 flash 配置判定，不能整层共享。
 		final long now = System.currentTimeMillis();
-		final boolean flashOn = flashOn(props.parts, now);
 
 		// 上游 renderNormal 的粒度是「部件记录 × 位置实例」：
 		// properties.parts[] 每条记录按自己的 names 取锚点节点，再对每个位置
@@ -151,6 +153,8 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			// 上游 ModelPropertiesPart.java:339-345 —— 门行程窗口外不渲染该部件。
 			// 上游用 x/z = Integer.MAX_VALUE 把部件推离视野，而不是跳过绘制。
 			final boolean shouldRender = info.shouldRenderAt(doorValue, opening);
+			// 上游 ModelPropertiesPart.java:317 —— per-part 闪烁判定
+			final boolean flashOn = info.flashOn(now);
 			for (final String name : info.names) {
 				final ModelPart anchor = tree.groupParts.get(name);
 				if (anchor == null) {
@@ -170,24 +174,6 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 				}
 			}
 		}
-	}
-
-	/**
-	 * 上游的闪烁判定是**层级**的：{@code ModelPropertiesPart.java:317}
-	 * 用的是 {@code ModelPropertiesPart} 自己的 {@code flashOnTime}/
-	 * {@code flashOffTime}（整层一份），而不是每个 part 的。
-	 * <p>
-	 * mtr-next 的数据层把这两个字段挂在 {@code PartInfo} 上（与上游 schema
-	 * 一致），因此这里取**第一条**带闪烁配置的部件作为整层的值——
-	 * 上游一层的所有部件共享同一份配置，取第一条等价。
-	 */
-	private static boolean flashOn(java.util.List<Properties4xLoader.PartInfo> parts, long now) {
-		for (final Properties4xLoader.PartInfo info : parts) {
-			if (info.flashOnTime + info.flashOffTime != 0) {
-				return info.flashOn(now);
-			}
-		}
-		return true;
 	}
 
 	/**

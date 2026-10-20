@@ -84,7 +84,6 @@ public final class FormationPreviewRenderer {
 			final float previewDoorValue = 1.0F;
 			final boolean previewOpening = true;
 			final long now = System.currentTimeMillis();
-			final boolean flashOn = flashOn(props.parts, now);
 
 			for (final Properties4xLoader.PartInfo info : props.parts) {
 				if (!"NORMAL".equals(info.type) || info.positionDefinitionNames.isEmpty()) {
@@ -92,6 +91,10 @@ public final class FormationPreviewRenderer {
 				}
 				// 上游 ModelPropertiesPart.java:339-345：门行程窗口外不渲染
 				final boolean shouldRender = info.shouldRenderAt(previewDoorValue, previewOpening);
+				// 上游 ModelPropertiesPart.java:317：闪烁是 per-part 的
+				// （每条 wrapper 传自己的 flashOnTime/flashOffTime 给新建的
+				//  ModelPropertiesPart 实例，见 ModelPropertiesPartWrapper.java:80-105）
+				final boolean flashOn = info.flashOn(now);
 				for (final String name : info.names) {
 					final ModelPart anchor = tree.groupParts.get(name);
 					if (anchor == null) {
@@ -113,19 +116,6 @@ public final class FormationPreviewRenderer {
 				}
 			}
 		}
-	}
-
-	/**
-	 * 层级闪烁判定（上游 {@code ModelPropertiesPart.java:317}）。
-	 * 整层共享一份配置，取第一条带闪烁配置的部件。
-	 */
-	private static boolean flashOn(java.util.List<Properties4xLoader.PartInfo> parts, long now) {
-		for (final Properties4xLoader.PartInfo info : parts) {
-			if (info.flashOnTime + info.flashOffTime != 0) {
-				return info.flashOn(now);
-			}
-		}
-		return true;
 	}
 
 	/** 预览态绘制一次实例（门完全打开） */

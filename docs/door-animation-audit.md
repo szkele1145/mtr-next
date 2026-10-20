@@ -619,9 +619,20 @@ mtr-next 此前 `time = doorsOpen ? doorValue : 0.0F`，门关闭期间曲线被
 **「推离视野」而非跳过绘制**：上游这么做是为了保持渲染批次与光照计算一致，
 本实现照做（`drawInstance` 中改 `ox/oy/oz`）。
 
-**层级闪烁**：上游的 `flashOnTime`/`flashOffTime` 是 `ModelPropertiesPart`
-（整层）属性；mtr-next 数据层挂在 `PartInfo` 上（与上游 schema 一致），
-故取**第一条**带闪烁配置的部件作为整层值 —— 一层共享一份配置，取第一条等价。
+**闪烁是 per-part，不是整层**（**0.36.4 修正**）：
+
+上游 `ModelPropertiesPartWrapper.toModelPropertiesPartAndPositionDefinition`
+（L80-105）为**每条 wrapper** 创建 `new ModelPropertiesPart(...)` 并传入
+**它自己的** `flashOnTime`/`flashOffTime`；`ModelPropertiesPart.renderNormal`
+L317 读的正是**本实例**的字段。
+
+⇒ 闪烁判定是**部件级**的。0.36.3 曾误实现为「整层取第一条带 flash 配置的部件」，
+0.36.4 改为每个部件用 `info.flashOn(now)` 独立判定。
+
+实测（`tools/verify_flash_semantics.js`，ERIDU 14 个 properties 文件）：
+189 个部件记录中仅 **6 个**带非零 flash 配置，且**每个文件只有 1 个部件**带配置
+（`doordengshan_n` 500/500、`lcdp_doorshanshuo` 800/800）。
+⇒ 本车包上两种实现视觉等价，但对其他车包有差别 —— 修正是必要的。
 
 ERIDU 实测命中：`doordengguan_n` from=100、`doordengshan_n` from=50 + flash 500/500、
 `lcdp_dooryincang` from=1。
