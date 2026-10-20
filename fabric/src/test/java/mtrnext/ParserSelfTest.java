@@ -34,6 +34,7 @@ public final class ParserSelfTest {
 		testOutlinerGroupPath();
 		testDoorAnimation4x();
 		testBbModelScaleAndUv();
+		testUpstreamBoxRotation();
 		testDoorAnnotation();
 		testDoorOverlapDetection();
 		testPositionDefinitionsMirror();
@@ -544,6 +545,111 @@ public final class ParserSelfTest {
 				"{\"elements\":[{\"uuid\":\"a\",\"name\":\"cube\",\"from\":[0,0,0],\"to\":[16,16,16]}]}",
 				0.0F);
 		check("缺 resolution 不崩", noRes.elements.size() == 1);
+	}
+
+	/**
+	 * [0.36.6] 上游 {@code Element.upstreamBox()} 的<b>旋转</b>语义回归。
+	 * <p>
+	 * 2026-10-21 取到上游二进制并反编译核实（此前为开放问题）：
+	 * <ul>
+	 *   <li>上游 {@code org.mtr.mapping.holder.Box(double×6)} 直接
+	 *       {@code new class_238(x1,y1,z1,x2,y2,z2)}；</li>
+	 *   <li>MC 1.20.1 的 {@code AABB} 六参构造器内部用
+	 *       {@code Math.min}/{@code Math.max} <b>自行归一化</b>
+	 *       （{@code minX=Math.min(x1,x2)}、{@code maxX=Math.max(x1,x2)}，X/Y/Z 同）；</li>
+	 *   <li>MC {@code Vec3} 的 {@code xRot}/{@code yRot}/{@code zRot} 是绕原点的
+	 *       标准右手旋转：{@code xRot} 保 X、{@code yRot} 保 Y、{@code zRot} 保 Z；</li>
+	 *   <li>上游组合顺序为 {@code rotateX → rotateY → rotateZ}。</li>
+	 * </ul>
+	 * ⇒ mtr-next 的 {@code rotate()} 与上游<b>逐项一致</b>，
+	 * {@code upstreamBox()} 的归一化与上游 {@code AABB} <b>行为等效</b>。
+	 * <p>
+	 * 本测试用手算可验证的 90° 整数旋转构造断言，覆盖 X/Y/Z 单轴与组合。
+	 */
+	private static void testUpstreamBoxRotation() {
+		System.out.println("[upstreamBox 旋转语义（对上游二进制实证）]");
+
+		// --- 场景 1：绕 Z 轴 +90°（rotation[2] = +90 → rz = +π/2）---
+		// 元素 from=[0,0,0] to=[16,16,16]、origin 缺省 [0,0,0]、modelYOffset=0：
+		//   x = -to[0] - originX = -16；y = -to[1] - originY = -16；z = from[2] - originZ = 0
+		//   尺寸 sizeX=sizeY=sizeZ=16
+		// MC zRot(+90°)：x' = x·cos − y·sin，y' = x·sin + y·cos，z' = z
+		//   v1 = rot(-16,-16,0) = (16, -16, 0)
+		//   v2 = rot(0,0,16)   = (0, 0, 16)      ← x+sizeX = -16+16 = 0
+		// Box 参数 = −(v + origin)/16 → v1 端 (-1, 1, 0)、v2 端 (0, 0, -1)
+		// 归一化 → min=(-1, 0, -1), max=(0, 1, 0)
+		final var rz90 = mtrnext.client.render.BbModelTree.parseForTest("""
+				{ "elements": [
+				  { "uuid": "r", "name": "cube", "from": [0,0,0], "to": [16,16,16],
+				    "rotation": [0, 0, 90] } ] }
+				""", 0.0F);
+		final var bz = rz90.elements.get(0).upstreamBox();
+		check("绕Z+90 minX = −1", near(bz[0], -1.0F));
+		check("绕Z+90 minY = 0", near(bz[1], 0.0F));
+		check("绕Z+90 minZ = −1", near(bz[2], -1.0F));
+		check("绕Z+90 maxX = 0", near(bz[3], 0.0F));
+		check("绕Z+90 maxY = 1", near(bz[4], 1.0F));
+		check("绕Z+90 maxZ = 0", near(bz[5], 0.0F));
+		check("绕Z+90 旋转后仍是 1×1×1 格",
+				near(bz[3] - bz[0], 1.0F) && near(bz[4] - bz[1], 1.0F) && near(bz[5] - bz[2], 1.0F));
+
+		// --- 场景 2：绕 Y 轴 +90°（rotation[1] = +90 → ry = −π/2）---
+		// MC yRot(θ)：x' = x·cos + z·sin，z' = z·cos − x·sin，y' = y
+		//   v1 = rot(-16,-16,0) = (0, -16, -16)
+		//   v2 = rot(0,0,16)    = (-16, 0, 0)
+		// Box 参数 → v1 端 (0, 1, 1)、v2 端 (1, 0, 0)；归一化 min=(0,0,0) max=(1,1,1)
+		final var ry90 = mtrnext.client.render.BbModelTree.parseForTest("""
+				{ "elements": [
+				  { "uuid": "r", "name": "cube", "from": [0,0,0], "to": [16,16,16],
+				    "rotation": [0, 90, 0] } ] }
+				""", 0.0F);
+		final var by = ry90.elements.get(0).upstreamBox();
+		check("绕Y+90 minX = 0", near(by[0], 0.0F));
+		check("绕Y+90 minY = 0", near(by[1], 0.0F));
+		check("绕Y+90 minZ = 0", near(by[2], 0.0F));
+		check("绕Y+90 maxX = 1", near(by[3], 1.0F));
+		check("绕Y+90 maxY = 1", near(by[4], 1.0F));
+		check("绕Y+90 maxZ = 1", near(by[5], 1.0F));
+
+		// --- 场景 3：绕 X 轴 +90°（rotation[0] = +90 → rx = −π/2）---
+		// MC xRot(θ)：y' = y·cos − z·sin，z' = y·sin + z·cos，x' = x
+		//   v1 = rot(-16,-16,0) = (-16, 0, 16)
+		//   v2 = rot(0,0,16)    = (0, 16, 0)
+		// Box 参数 → v1 端 (1, 0, -1)、v2 端 (0, -1, 0)；归一化 min=(0,-1,-1) max=(1,0,0)
+		final var rx90 = mtrnext.client.render.BbModelTree.parseForTest("""
+				{ "elements": [
+				  { "uuid": "r", "name": "cube", "from": [0,0,0], "to": [16,16,16],
+				    "rotation": [90, 0, 0] } ] }
+				""", 0.0F);
+		final var bx = rx90.elements.get(0).upstreamBox();
+		check("绕X+90 minX = 0", near(bx[0], 0.0F));
+		check("绕X+90 minY = −1", near(bx[1], -1.0F));
+		check("绕X+90 minZ = −1", near(bx[2], -1.0F));
+		check("绕X+90 maxX = 1", near(bx[3], 1.0F));
+		check("绕X+90 maxY = 0", near(bx[4], 0.0F));
+		check("绕X+90 maxZ = 0", near(bx[5], 0.0F));
+
+		// --- 场景 4：归一化等效性（三轴全倒序的情形也必须产出有序盒）---
+		// 上游把 X/Y/Z 全部取负 ⇒ 传入 AABB 的三轴常倒序；
+		// MC AABB 构造器自行 min/max 归一化 ⇒ 上游拿到的 Box 始终有序。
+		// mtr-next upstreamBox() 同样返回有序盒 ⇒ 与上游等效。
+		// from=[16,0,0] to=[32,16,16]：x=-32, y=-16, z=0, 尺寸 16³
+		//   v1=(-32,-16,0) v2=(-16,0,16) → Box 参数 (2,1,0) 与 (1,0,-1)
+		//   归一化 min=(1,0,-1) max=(2,1,0)
+		final var flipped = mtrnext.client.render.BbModelTree.parseForTest("""
+				{ "elements": [
+				  { "uuid": "f", "name": "cube", "from": [16,0,0], "to": [32,16,16] } ] }
+				""", 0.0F);
+		final var bf = flipped.elements.get(0).upstreamBox();
+		check("倒序输入归一化后 minX = 1", near(bf[0], 1.0F));
+		check("倒序输入归一化后 minY = 0", near(bf[1], 0.0F));
+		check("倒序输入归一化后 minZ = −1", near(bf[2], -1.0F));
+		check("倒序输入归一化后 maxX = 2", near(bf[3], 2.0F));
+		check("倒序输入归一化后 maxY = 1", near(bf[4], 1.0F));
+		check("倒序输入归一化后 maxZ = 0", near(bf[5], 0.0F));
+		check("归一化后 minX ≤ maxX", bf[0] <= bf[3]);
+		check("归一化后 minY ≤ maxY", bf[1] <= bf[4]);
+		check("归一化后 minZ ≤ maxZ", bf[2] <= bf[5]);
 	}
 
 	/**

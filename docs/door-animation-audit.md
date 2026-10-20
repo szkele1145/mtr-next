@@ -645,4 +645,116 @@ ERIDU 实测命中：`doordengguan_n` from=100、`doordengshan_n` from=50 + flas
 - **仍未覆盖**：`doorOverrideValue`（上游的开门道调试覆盖，YMTR 无对应接口）、
   `openDoorways` 的逐部件匹配（上游按 Box 匹配门道）、`canOpen` 判定。
   这三项上游能力在 YMTR 宿主下没有输入，**不是 bug，是宿主差异**。
+
+## 五h、0.36.5：门重叠检测复刻上游 `testDoors` + 顶层组语义修正（2026-10-21 01:00）
+
+### 发布事实
+
+- Modrinth `jUmZS1kp`：`0.36.5` = **`UwacCrL6`**，100679 B，sha512 `ffb63b91…89b5`
+- GitHub `szkele1145/mtr-next`：`v0.36.5` = release **`418691209`**，asset **`660033035`**
+  （远端下载校验 sha512 与本地一致）
+- 提交 `4828d88`（代码） + `2233990`（发布脚本）
+- 验证：`parserSelfTest` **PASS=245 FAIL=0**；`bbModelTreeTest` **PASS=46 FAIL=0**
+
+### 改动 1：顶层组语义修正（**最重要的偏差修正**）
+
+上游 `DynamicVehicleModel.java:41-62`：
+
+```java
+for (BlockbenchOutline group : blockbenchModel.getOutlines()) {   // ← 只迭代顶层
+    final ModelPart anchor = ...;                                  // 零姿态锚点
+    nameToPart.put(group.getName(), anchor);                       // 只有顶层组进锚点表
+}
+```
+
+⇒ **只有顶层 outliner 组有 `nameToPart` 锚点**；嵌套组仅作为链上的
+旋转/位移节点，**不建立锚点**。
+
+⇒ `modelPropertiesPart.json` 的 `parts[].names` **只能匹配顶层组名**。
+
+mtr-next 此前用「祖先组名链」匹配（`isDoorByGroup`），
+会把嵌套组（如 ERIDU 的 `win_n_a1`）误认为可被 part 声明拥有。
+现改为只匹配顶层组名（`BbModelTree.groupNames` / `topLevelGroups`）。
+
+ERIDU 实测：970 元素 / **36 顶层组** / 58 个组名总数 / 13 个顶层组带 `mirror_uv` 元素。
+
+### 改动 2：新增 `DoorOverlapDetector`（复刻上游 `DynamicVehicleModel.testDoors`）
+
+| 上游 | mtr-next |
+| --- | --- |
+| 门盒 = element 的 `Box`（BB 坐标系） | `Element.upstreamBox()` |
+| 粒度 = 部件记录 × 位置实例 | `DoorBox` 一条 = 一个 part 记录的一个位置实例 |
+| `positions` / `positionsFlipped` 展开 | `DoorOverlapDetector.instances(...)`（flipped=false/true） |
+| flip 语义：X、Z 变号，Y 不变（`ModelPropertiesPart.java:647-651`） | 同上 + `x/16, y/16, z/16` 偏移 |
+| 时间片 `time = i/5`（i = 0..5） | 同（5 片） |
+| 0.1 零厚度补偿（`:244-246`） | `DoorBox.intersects(other, dx, dz)` |
+| 报 WARN | 返回字符串列表（纯数据，可离线回归） |
+
+ERIDU 实测：36 个门盒（= 顶层组数），真实几何**无重叠告警**。
+
+### 改动 3：上游 `Box` 的三轴倒序 → 归一化（**与上游等效**，2026-10-21 更正）
+
+上游 `BlockbenchElement` 构造 `Box` 时对 X/Y/Z **全部取负**：
+
+```java
+Box(-(v1.x + originX) / 16, -(v1.y + originY) / 16, -(v1.z + originZ) / 16,
+    -(v2.x + originX) / 16, -(v2.y + originY) / 16, -(v2.z + originZ) / 16)
+```
+
+由于 X/Y/Z 三个分量都取负，传入的「min 端」通常**大于**「max 端」 —— 三轴全部倒序。
+
+> **⚠️ 0.36.5 的记载在此更正（2026-10-21）**
+>
+> 0.36.5 曾断言「MC 的 `Box.intersects` 要求每轴 `min <= max`，对倒序轴恒 false
+> ⇒ **上游 `testDoors` 对 bbmodel 实际永远不会报重叠**」——**该断言是错的**。
+>
+> 取到上游二进制（`Minecraft-Mappings-fabric-1.20.1-0.0.1.jar` 里的
+> `org.mtr.mapping.holder.Box`）并反编译核实：
+>
+> - 上游 `Box(double×6)` 构造器**直接** `new class_238(x1,y1,z1,x2,y2,z2)`；
+> - MC 1.20.1 的 `AABB` 六参构造器**内部自行归一化**：
+>   `minX=Math.min(x1,x2)`、`maxX=Math.max(x1,x2)`（X/Y/Z 三轴同）；
+> - ⇒ 上游拿到的 Box **始终有序**（min ≤ max），
+>   `testDoors` **能正常检测重叠**。
+>
+> **同批核实（MC `Vec3` 字节码）**：`xRot` / `yRot` / `zRot` 都是绕原点的
+> 标准右手旋转（`xRot` 保 X、`yRot` 保 Y、`zRot` 保 Z），组合顺序 X→Y→Z，
+> 与 mtr-next `Element.rotate()` 逐项一致。
+> ⇒ `Element.upstreamBox()` 的旋转数学**已被二进制实证**，不再是推测。
+
+mtr-next 在 `Element.upstreamBox()` 里做归一化（min/max 排序），
+**结果与上游 `AABB` 归一化后的值完全一致** —— 这是**行为等效**，
+而非 0.36.5 所说的「有意偏离」。代码实现**无需改动**；
+已同步修正 `BbModelTree.upstreamBox()` 的 javadoc。
+
+> 注：`Box` / `Vector3d` 位于 `org.mtr.mapping.holder`，在
+> `Minecraft-Mappings-fabric-<mc>-0.0.1.jar` 里（**不在** `Minecraft-Mappings`
+> 那个仓库，也不在 MTR 主仓库的源码树里）。
+> 获取方式（上游主仓库 `4.0.6` 分支的 `libs/` 目录）：
+> `https://raw.githubusercontent.com/Minecraft-Transit-Railway/Minecraft-Transit-Railway/4.0.6/libs/Minecraft-Mappings-fabric-1.20.1-0.0.1.jar`
+> （注意：Maven 坐标 `org.mtr:Minecraft-Mappings-common:0.0.1` 在
+> codemc / architectury / maven central 上均 404，只能从 GitHub `libs/` 取。）
+
+### 改动 4：删除 `BbModelLoader`（旧手算路径）
+
+- `BbModelLoader`（自制六面 UV + 逐面绘制）**早已不在渲染链路**中；
+- 0.36.5 将其**删除**，`CustomResourcesReloadMixin` 改走 `BbModelTreeCache.invalidate()`；
+- 5 个自测用例全部迁移到原生树（`BbModelTree.parseForTest` + `DoorOverlapDetector`）；
+- jar 体积 103933 → **100679 B**（−3254 B）。
+
+### 本轮踩到的三个坑（环境类，非代码）
+
+1. **`C:\jdk17` 与 `F:\vibe coding工程\build.ps1` 都被误删进了回收站**，
+   回收站里只剩空目录项（`$RAPZG0M` 为 0 文件），内容不可恢复。
+   改用 `C:\Users\一只屑\.jdks\ms-17.0.19`（Microsoft OpenJDK 17.0.19 LTS），
+   并建 `C:\jdk17` junction（路径必须纯 ASCII —— `gradle.properties` 按
+   ISO-8859-1 读，中文用户名会 mojibake）。
+2. **Gradle 8.11 只能从 wrapper 缓存取**：`C:\Users\一只屑\.gradle\wrapper\dists\gradle-8.11-bin\…`。
+   已建 `F:\vibe coding工程\sfx\gradle-8.11` junction，`build.ps1` 指向它
+   （`sfx\gradle-8.10.2` **不够**，Loom 1.9.2 要求 Gradle ≥ 8.11）。
+3. **全局 `C:\gradle-home\init.d\mirror.init.gradle` 会清空 `pluginManagement.repositories`**，
+   只留阿里云四个镜像 —— 而 **fabric-loom 的 plugin marker 只在 `maven.fabricmc.net`**，
+   导致「Plugin [id: 'fabric-loom', version: '1.9.2'] was not found」。
+   已在该 init 脚本里补回 Fabric maven。
+   另：git 需配代理 `http://127.0.0.1:65532`（系统代理）才能 push。
 等渲染重构完成、整体验证通过后一并发布。

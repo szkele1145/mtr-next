@@ -166,7 +166,7 @@ public final class BbModelTree {
 
 		/**
 		 * [0.36.5] 复刻上游 {@code BlockbenchElement.setModelPart} 返回的
-		 * {@code Box}（BB 坐标系，单位：格），并<b>归一化</b>。
+		 * {@code Box}（BB 坐标系，单位：格）。
 		 * <p>
 		 * 上游（{@code docs/_upstream/BlockbenchElement.java:48-59}）：
 		 * <pre>
@@ -177,13 +177,28 @@ public final class BbModelTree {
 		 * </pre>
 		 * 旋转角为弧度制（上游 L26-28：rx=rad(-r0), ry=rad(-r1), rz=rad(+r2)）。
 		 * <p>
-		 * <b>[0.36.5 归一化决策]</b>：上游 Box 的前三个参数是"对角点 1"、
-		 * 后三个是"对角点 2"，<b>不是</b>有序的 min/max——因为 X/Y/Z 全部取负，
-		 * 三轴通常<b>倒序</b>（minX > maxX）。MC 的 {@code Box.intersects}
-		 * 对倒序轴恒 false，因此上游 {@code testDoors} 对 bbmodel 车体
-		 * <b>实际失效</b>（永不报重叠，与其 javadoc 意图相悖）。
-		 * 本方法返回<b>归一化后</b>的 [minX, minY, minZ, maxX, maxY, maxZ]，
-		 * 使门重叠检测（{@link DoorOverlapDetector}）能实现上游的<b>意图</b>。
+		 * <b>[0.36.6 更正]</b>：本方法返回<b>归一化后</b>的
+		 * [minX, minY, minZ, maxX, maxY, maxZ]，与上游<b>行为等效</b>——
+		 * 但理由与 0.36.5 的记载<b>不同</b>，此处更正如下。
+		 * <p>
+		 * 0.36.5 曾断言「上游 Box 三轴倒序 ⇒ MC {@code Box.intersects} 恒 false
+		 * ⇒ 上游 {@code testDoors} 永不报重叠」——<b>该断言是错的</b>。
+		 * 2026-10-21 取到上游二进制（{@code Minecraft-Mappings-fabric-1.20.1-0.0.1.jar}
+		 * 的 {@code org.mtr.mapping.holder.Box}）并反编译核实：
+		 * <ul>
+		 *   <li>上游 {@code Box(double×6)} 构造器直接
+		 *       {@code new class_238(x1,y1,z1,x2,y2,z2)}；</li>
+		 *   <li>MC 1.20.1 的 {@code AABB} 六参构造器内部用
+		 *       {@code Math.min}/{@code Math.max} <b>自行归一化</b>：<br>
+		 *       {@code minX=Math.min(x1,x2)}, {@code maxX=Math.max(x1,x2)}（X/Y/Z 同）；</li>
+		 *   <li>⇒ 上游拿到的 Box <b>始终是有序的</b>（min ≤ max），
+		 *       {@code testDoors} <b>能正常检测重叠</b>。</li>
+		 * </ul>
+		 * <p>
+		 * 同批核实（MC {@code Vec3} 字节码）：{@code xRot/yRot/zRot} 均为
+		 * 绕原点的标准右手旋转，{@code xRot} 保 X、{@code yRot} 保 Y、{@code zRot} 保 Z，
+		 * 组合顺序 X→Y→Z——与本类 {@link #rotate(double, double, double, double, double, double)}
+		 * 的实现逐项一致。
 		 *
 		 * @return 6 元数组 [minX, minY, minZ, maxX, maxY, maxZ]（格，已归一化）
 		 */
