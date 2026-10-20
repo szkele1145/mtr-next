@@ -79,10 +79,19 @@ public final class FormationPreviewRenderer {
 			final Map<String, PositionDefinitions4xLoader.PositionGroup> positions =
 					PositionDefinitions4xLoader.load(manager, layer.positionDefinitionsResource);
 
+			// 预览态：门完全打开（门开度 1.0，方向 opening=true），
+			// 与上游 renderNormal 在「门全开」时的取值一致。
+			final float previewDoorValue = 1.0F;
+			final boolean previewOpening = true;
+			final long now = System.currentTimeMillis();
+			final boolean flashOn = flashOn(props.parts, now);
+
 			for (final Properties4xLoader.PartInfo info : props.parts) {
 				if (!"NORMAL".equals(info.type) || info.positionDefinitionNames.isEmpty()) {
 					continue;
 				}
+				// 上游 ModelPropertiesPart.java:339-345：门行程窗口外不渲染
+				final boolean shouldRender = info.shouldRenderAt(previewDoorValue, previewOpening);
 				for (final String name : info.names) {
 					final ModelPart anchor = tree.groupParts.get(name);
 					if (anchor == null) {
@@ -95,10 +104,10 @@ public final class FormationPreviewRenderer {
 						}
 						// 预览：门按完全打开取值（time=1）
 						for (final float[] p : group.positions) {
-							drawInstance(poseStack, vc, anchor, info, false, p[0], p[1], p[2]);
+							drawInstance(poseStack, vc, anchor, info, false, p[0], p[1], p[2], shouldRender, flashOn);
 						}
 						for (final float[] p : group.positionsFlipped) {
-							drawInstance(poseStack, vc, anchor, info, true, -p[0], p[1], p[2]);
+							drawInstance(poseStack, vc, anchor, info, true, -p[0], p[1], p[2], shouldRender, flashOn);
 						}
 					}
 				}
@@ -106,16 +115,41 @@ public final class FormationPreviewRenderer {
 		}
 	}
 
+	/**
+	 * 层级闪烁判定（上游 {@code ModelPropertiesPart.java:317}）。
+	 * 整层共享一份配置，取第一条带闪烁配置的部件。
+	 */
+	private static boolean flashOn(java.util.List<Properties4xLoader.PartInfo> parts, long now) {
+		for (final Properties4xLoader.PartInfo info : parts) {
+			if (info.flashOnTime + info.flashOffTime != 0) {
+				return info.flashOn(now);
+			}
+		}
+		return true;
+	}
+
 	/** 预览态绘制一次实例（门完全打开） */
 	private static void drawInstance(PoseStack poseStack, VertexConsumer vc, ModelPart anchor,
-			Properties4xLoader.PartInfo info, boolean flipped, float px, float py, float pz) {
+			Properties4xLoader.PartInfo info, boolean flipped, float px, float py, float pz,
+			boolean shouldRender, boolean flashOn) {
 		final DoorAnimation4x anim = DoorAnimation4x.parse(info.doorAnimationType);
 		final float dx = (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)
 				? 0.0F : anim.getDoorAnimationX(info.doorXMultiplier, flipped, 1.0F);
 		final float dz = (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)
 				? 0.0F : anim.getDoorAnimationZ(info.doorZMultiplier, flipped, 1.0F, true);
 		poseStack.pushPose();
-		poseStack.translate((px + dx) / 16.0F, py / 16.0F, (pz + dz) / 16.0F);
+		// 上游用 Integer.MAX_VALUE 把不该渲染的部件推离视野，而非跳过绘制
+		float ox = (px + dx) / 16.0F;
+		float oy = py / 16.0F;
+		float oz = (pz + dz) / 16.0F;
+		if (!shouldRender) {
+			ox = Integer.MAX_VALUE;
+			oz = Integer.MAX_VALUE;
+		}
+		if (!flashOn) {
+			oy = Integer.MAX_VALUE;
+		}
+		poseStack.translate(ox, oy, oz);
 		if (flipped) {
 			poseStack.mulPose(com.mojang.math.Axis.YP.rotation((float) Math.PI));
 		}

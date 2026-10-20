@@ -388,6 +388,30 @@ public final class ParserSelfTest {
 		check("STANDARD Z(t=1)=11", near(std.getDoorAnimationZ(11.0F, false, 1.0F, true), 11.0F));
 		check("STANDARD Z(t=0)=0", near(std.getDoorAnimationZ(11.0F, false, 0.0F, true), 0.0F));
 		check("STANDARD_SLOW Z(t=0.25)=5.5", near(stdSlow.getDoorAnimationZ(11.0F, false, 0.25F, true), 5.5F));
+		/*
+		 * STANDARD_SLOW 的**关门专用分段曲线**（上游 DoorAnimationType.java:142-151）：
+		 *   if (!opening) {
+		 *       if (time > 0.2)  return smoothEnds(1, doorMax, 0.2, 0.5, time);
+		 *       if (time > 0.1)  return 1;
+		 *       else             return smoothEnds(0, 1, 0, 0.1, time);
+		 *   }
+		 * 注意它与开门分支（fall through 到 default 的 smoothEnds(0, doorMax, 0, 0.5, time)）
+		 * 在 t<0.2 区间**不同**：关门分支在 t=0.15 时是 1，开门分支是 3.3。
+		 * ⇒ 传错 opening 会让关门时门「跳」一下。
+		 */
+		check("STANDARD_SLOW 关门 t=0.15 → 1（关门专用曲线）",
+				near(stdSlow.getDoorAnimationZ(11.0F, false, 0.15F, false), 1.0F, 0.001F));
+		check("STANDARD_SLOW 开门 t=0.15 ≠ 1（走 default 分支）",
+				!near(stdSlow.getDoorAnimationZ(11.0F, false, 0.15F, true), 1.0F, 0.001F));
+		check("STANDARD_SLOW 关门 t=0.05 → 0.5（smoothEnds(0,1,0,0.1)）",
+				near(stdSlow.getDoorAnimationZ(11.0F, false, 0.05F, false), 0.5F, 0.02F));
+		check("STANDARD_SLOW 关门 t=0.3 → 介于 1 与 11",
+				stdSlow.getDoorAnimationZ(11.0F, false, 0.3F, false) > 1.0F
+						&& stdSlow.getDoorAnimationZ(11.0F, false, 0.3F, false) < 11.0F);
+		// STANDARD（无关门专用分支）两种方向结果相同
+		check("STANDARD 开关两方向同值（无专用分支）",
+				near(std.getDoorAnimationZ(11.0F, false, 0.3F, true),
+						std.getDoorAnimationZ(11.0F, false, 0.3F, false), 0.001F));
 		// 负倍率 -> 反向滑动（ERIDU men3 z=-11）
 		check("STANDARD 负倍率 Z(t=1)=-11", near(std.getDoorAnimationZ(-11.0F, false, 1.0F, true), -11.0F));
 

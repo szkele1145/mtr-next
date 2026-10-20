@@ -46,6 +46,18 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 * 每车一份——因为插值器带状态，跨车共享会串味。
 	 */
 	private final Map<String, DoorMovementInterpolation> doorInterpolations = new java.util.concurrent.ConcurrentHashMap<>();
+	/**
+	 * 上一帧的门开度（每车一份）。
+	 * <p>
+	 * 上游的 {@code opening} 来自 {@code getAdjustedDoorMultiplier(...) > 0}
+	 * （{@code ModelPropertiesPart.java:338}）——它是**门运动方向**，
+	 * 不是「门当前是否打开」。YMTR 的 {@code renderCar} 只给两个布尔
+	 * （{@code doorLeftOpen} / {@code doorRightOpen}），没有方向信息，
+	 * 因此这里用**门开度的变化方向**推导：比上一帧大 = 开门中。
+	 * <p>
+	 * 上游同名但语义不同，勿混用。
+	 */
+	private float previousDoorValue;
 
 	/** 供 TrainTypeBridge 注册使用（无列车上下文，门位移退化为布尔） */
 	public BbModelTrainRenderer(String trainId) {
@@ -73,6 +85,10 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 
 			final boolean anyDoorOpen = doorLeftOpen || doorRightOpen;
 			final float doorValue = doorValue(anyDoorOpen);
+			// 上游 opening = 门运动方向（>0 开、<0 关）。YMTR 只给布尔，
+			// 这里用门开度的变化方向推导（比上一帧大 = 开门中）。
+			final boolean opening = doorValue >= previousDoorValue;
+			previousDoorValue = doorValue;
 
 			matrices.pushPose();
 			matrices.translate(x, y, z);
@@ -84,7 +100,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 
 			final ResourceManager manager = Minecraft.getInstance().getResourceManager();
 			for (final VehicleResource.ModelLayer layer : res.models) {
-				renderLayer(manager, layer, doorValue, anyDoorOpen);
+				renderLayer(manager, layer, doorValue, opening);
 			}
 
 			// host 在 TrainRendererBase.applyAverageTransform 里 push 一次，
@@ -98,7 +114,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	}
 
 	private void renderLayer(ResourceManager manager, VehicleResource.ModelLayer layer,
-			float doorValue, boolean doorsOpen) {
+			float doorValue, boolean opening) {
 		if (layer.modelResource == null || layer.modelResource.isEmpty()) {
 			return; // props-only 层：只承载 gangway/barrier 参数，无几何
 		}
@@ -116,6 +132,11 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		final Map<String, PositionDefinitions4xLoader.PositionGroup> positions =
 				PositionDefinitions4xLoader.load(manager, layer.positionDefinitionsResource);
 
+		// 上游 ModelPropertiesPart.java:317 —— 闪烁窗口是**层级**属性，
+		// 不随部件变化：flashOn 为假时整层的 y 被推离视野。
+		final long now = System.currentTimeMillis();
+		final boolean flashOn = flashOn(props.parts, now);
+
 		// 上游 renderNormal 的粒度是「部件记录 × 位置实例」：
 		// properties.parts[] 每条记录按自己的 names 取锚点节点，再对每个位置
 		// 渲染一次。因此同一组可被多条记录引用（ERIDU 的 men2 就有两条：
@@ -127,6 +148,9 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			if (info.positionDefinitionNames.isEmpty()) {
 				continue; // 上游 getPositionDefinition 未被调用 → 该记录不产出几何
 			}
+			// 上游 ModelPropertiesPart.java:339-345 —— 门行程窗口外不渲染该部件。
+			// 上游用 x/z = Integer.MAX_VALUE 把部件推离视野，而不是跳过绘制。
+			final boolean shouldRender = info.shouldRenderAt(doorValue, opening);
 			for (final String name : info.names) {
 				final ModelPart anchor = tree.groupParts.get(name);
 				if (anchor == null) {
@@ -138,14 +162,32 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 						continue;
 					}
 					for (final float[] p : group.positions) {
-						drawInstance(anchor, vc, info, false, p[0], p[1], p[2], doorValue, doorsOpen);
+						drawInstance(anchor, vc, info, false, p[0], p[1], p[2], doorValue, opening, shouldRender, flashOn);
 					}
 					for (final float[] p : group.positionsFlipped) {
-						drawInstance(anchor, vc, info, true, -p[0], p[1], p[2], doorValue, doorsOpen);
+						drawInstance(anchor, vc, info, true, -p[0], p[1], p[2], doorValue, opening, shouldRender, flashOn);
 					}
 				}
 			}
 		}
+	}
+
+	/**
+	 * 上游的闪烁判定是**层级**的：{@code ModelPropertiesPart.java:317}
+	 * 用的是 {@code ModelPropertiesPart} 自己的 {@code flashOnTime}/
+	 * {@code flashOffTime}（整层一份），而不是每个 part 的。
+	 * <p>
+	 * mtr-next 的数据层把这两个字段挂在 {@code PartInfo} 上（与上游 schema
+	 * 一致），因此这里取**第一条**带闪烁配置的部件作为整层的值——
+	 * 上游一层的所有部件共享同一份配置，取第一条等价。
+	 */
+	private static boolean flashOn(java.util.List<Properties4xLoader.PartInfo> parts, long now) {
+		for (final Properties4xLoader.PartInfo info : parts) {
+			if (info.flashOnTime + info.flashOffTime != 0) {
+				return info.flashOn(now);
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -155,16 +197,33 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 * <p>
 	 * 渲染对象是<b>组锚点节点</b>（上游 {@code nameToPart} 的 ModelPartExtension），
 	 * 故门位移移动整个顶层组，与上游一致。
+	 * <p>
+	 * <b>「推离视野」语义</b>：上游在不该渲染时把 x/z（门时序窗口外）
+	 * 或 y（闪烁熄灭）设成 {@code Integer.MAX_VALUE}，而不是跳过绘制——
+	 * 这样渲染批次与光照计算保持一致。本实现用同样的手法。
 	 *
-	 * @param flipped 上游 positionsFlipped 槽：绕 Y 轴 180°
-	 * @param px      位定义 X 偏移（像素，翻转位已取反）
+	 * @param flipped      上游 positionsFlipped 槽：绕 Y 轴 180°
+	 * @param px           位定义 X 偏移（像素，翻转位已取反）
+	 * @param shouldRender 门时序窗口内才渲染（上游 L339-345）
+	 * @param flashOn      闪烁点亮中（上游 L317/L320）
 	 */
 	private void drawInstance(ModelPart anchor, VertexConsumer vc, Properties4xLoader.PartInfo info,
-			boolean flipped, float px, float py, float pz, float doorValue, boolean doorsOpen) {
-		final float[] door = doorOffsetPixels(info, flipped, doorValue, doorsOpen);
+			boolean flipped, float px, float py, float pz, float doorValue, boolean opening,
+			boolean shouldRender, boolean flashOn) {
+		final float[] door = doorOffsetPixels(info, flipped, doorValue, opening);
 		matrices.pushPose();
 		// 位移统一按像素给出，这里一次性转格
-		matrices.translate((px + door[0]) / 16.0F, py / 16.0F, (pz + door[1]) / 16.0F);
+		float ox = (px + door[0]) / 16.0F;
+		float oy = py / 16.0F;
+		float oz = (pz + door[1]) / 16.0F;
+		if (!shouldRender) {
+			ox = Integer.MAX_VALUE;
+			oz = Integer.MAX_VALUE;
+		}
+		if (!flashOn) {
+			oy = Integer.MAX_VALUE;
+		}
+		matrices.translate(ox, oy, oz);
 		if (flipped) {
 			matrices.mulPose(com.mojang.math.Axis.YP.rotation((float) Math.PI));
 		}
@@ -174,31 +233,38 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 
 	/**
 	 * 门位移（像素）：上游
-	 * {@code partDetails.x + doorAnimationType.getDoorAnimationX(doorXMultiplier, partDetails.flipped, time)}
-	 * 与 {@code partDetails.z + getInterpolatedDoorValue(doorAnimationType, doorZMultiplier, partDetails.flipped, ...)}。
+	 * {@code partDetails.x + doorAnimationType.getDoorAnimationX(doorXMultiplier, partDetails.flipped, Math.max(doorValue, doorOverrideValue))}
+	 * 与 {@code partDetails.z + getInterpolatedDoorValue(doorAnimationType, doorZMultiplier, partDetails.flipped, doorOverrideValue, opening)}。
 	 * <p>
 	 * {@code flipped} 传入曲线后由内部的 {@code copySign} 自动反号，
 	 * 因此镜像侧无需另算符号。
+	 * <p>
+	 * <b>time 参数就是 doorValue 本身</b>（上游 L347 传的是门开度，不是布尔）：
+	 * 门开度随时间从 1 递减到 0，关门时曲线自然回退——所以
+	 * {@code STANDARD_SLOW} 的关门分段曲线（{@code DoorAnimationType.java:142-151}）
+	 * 才能被触发。此前用 {@code doorsOpen ? doorValue : 0} 会让关门曲线永远取不到。
 	 * <p>
 	 * <b>Z 位移额外过一层 500 ms 线性插值</b>（上游
 	 * {@code PersistentVehicleData.getInterpolatedDoorValue} → {@code DoorMovementInterpolation}），
 	 * 用于消除开门↔关门方向翻转处的跳变；<b>X 位移不插值</b>（上游 L347 走
 	 * {@code getDoorAnimationX}，无插值层）。
+	 *
+	 * @param opening 上游语义：门<b>运动方向</b>（true = 开门中，false = 关门中）
 	 */
 	private float[] doorOffsetPixels(Properties4xLoader.PartInfo info, boolean flipped,
-			float doorValue, boolean doorsOpen) {
+			float doorValue, boolean opening) {
 		if (info == null || (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)) {
 			return ZERO;
 		}
 		final DoorAnimation4x anim = DoorAnimation4x.parse(info.doorAnimationType);
-		final float time = doorsOpen ? doorValue : 0.0F;
+		final float time = Math.abs(doorValue);
 		final float dx = anim.getDoorAnimationX(info.doorXMultiplier, flipped, time);
 		// 上游：曲线值 → 插值层（按 key 复用插值器）→ 与 doorOverride 取绝对值较大者
-		final float rawZ = anim.getDoorAnimationZ(info.doorZMultiplier, flipped, time, doorsOpen);
+		final float rawZ = anim.getDoorAnimationZ(info.doorZMultiplier, flipped, time, opening);
 		final String key = DoorMovementInterpolation.key(info.doorZMultiplier, info.doorAnimationType, flipped);
 		final DoorMovementInterpolation interpolation =
 				doorInterpolations.computeIfAbsent(key, k -> new DoorMovementInterpolation());
-		final float dz = interpolation.setAndGet(rawZ, doorsOpen);
+		final float dz = interpolation.setAndGet(rawZ, opening);
 		return new float[]{dx, dz};
 	}
 
