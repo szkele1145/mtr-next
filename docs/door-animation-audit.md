@@ -6,6 +6,9 @@
 > 展开已实现（0.35.3），离线回归 **216 项全绿**，真实 ERIDU 车包端到端验证通过；
 > **2026-10-20 §五d 补齐门时序/闪烁字段**（0.35.4，纯数据层），并修正
 > **`DOOR_MOVE_TIME = 3200`**（此前误设为 500）。离线回归 **243 项全绿**。
+> **2026-10-20 §五e 记录 0.36.0 发布后的复核结果**，并留一条**尚未修复的真实
+> 偏差**：上游 `getInterpolatedDoorValue` 的 500 ms 门位移插值层未实现
+> （影响 ERIDU 全部 42 个门部件）。
 
 ## 一、3.x 内置渲染器的门动画（不迁移）
 
@@ -352,6 +355,115 @@ Transport-Simulation-Core/src/main/java/org/mtr/core/data/Vehicle.java:59
 **渲染端尚未接入** `shouldRenderAt` / `flashOn`——本次只做数据层。
 渲染接入需等另一条进行中的渲染重构（bbmodel → MC 原生 `ModelPart`
 树）定型后再做，否则两条渲染路径会打架。
+
+## 五e、0.36.0 发布后复核（2026-10-20 09:42）
+
+### 发布事实
+
+0.35.4 的数据层已被 **0.36.0**（bbmodel → MC 原生 `ModelPart` 树）吸收，
+双方渠道均已发布并校验：
+
+| 渠道 | 标识 | 文件大小 | sha512 |
+|---|---|---|---|
+| Modrinth | 版本 id `gqItNHdg` | 100841 B | `e062c922…7540a65b…` |
+| GitHub | release `417915159` / tag `v0.36.0` | 100841 B | 同上（**双渠道一致**） |
+
+GitHub 下载回读与 Modrinth 声明的 sha512 **逐字节相同**。
+
+**已确认 0.36.0 的 jar 内包含 0.35.4 的全部成果**（反编译类常量池校验）：
+`Properties4xLoader$PartInfo` 含 `shouldRenderAt`、`flashOn`、
+`DOOR_MOVE_TIME`、`renderFromOpeningDoorTime`、`renderUntilOpeningDoorTime`、
+`renderFromClosingDoorTime`、`renderUntilClosingDoorTime`、
+`flashOnTime`、`flashOffTime`、`positionDefinitionNames`。
+
+**0.36.0 未回退 0.35.3 的能力**：`positionsFlipped` 在新渲染路径
+（`BbModelTrainRenderer` L135 / `FormationPreviewRenderer` L100）仍被消费；
+`DoorAnimation4x` 仍被两条路径使用。
+
+### 未修复的真实偏差：上游 500 ms 门位移插值层
+
+**上游**（`ModelPropertiesPart.java:348`）：
+
+```java
+z = shouldRender ? (float) (partDetails.z
+      + (canOpen
+         ? vehicle.persistentVehicleData.getInterpolatedDoorValue(
+               doorAnimationType, doorZMultiplier, partDetails.flipped,
+               doorOverrideValue, opening)
+         : 0))
+  : Integer.MAX_VALUE;
+```
+
+`getInterpolatedDoorValue`（`PersistentVehicleData.java:98-113`）先算曲线值，
+再过一层 `DoorMovementInterpolation`（同文件 L164-178）：
+
+```java
+private static class DoorMovementInterpolation {
+    private boolean opening;
+    private final Interpolation interpolation = new Interpolation(500); // 500 ms
+
+    private float setAndGet(double value, boolean opening) {
+        interpolation.setValue(value, this.opening != opening); // 方向翻转 → 重启插值
+        this.opening = opening;
+        return (float) interpolation.getValue();
+    }
+}
+```
+
+`Interpolation`（上游 `org.mtr.mod.resource.Interpolation`，快照
+`docs/_upstream/Interpolation.java`）是**线性**混合：
+
+```java
+final long difference = System.currentTimeMillis() - startMillis;
+if (difference < duration) {
+    return (1 - difference / duration) * oldValue
+         + difference / duration * latestValue;
+} else { oldValue = latestValue; return latestValue; }
+```
+
+**mtr-next 现状**（`BbModelTrainRenderer.java:184`）：
+
+```java
+anim.getDoorAnimationZ(info.doorZMultiplier, flipped, time, doorsOpen)
+```
+
+——**直接用曲线值，没有 500 ms 插值层**。
+
+**影响面**：ERIDU 实测门部件共 42 个（`STANDARD` 18 + `STANDARD_SLOW` 24），
+上游对**所有**部件统一走 `getInterpolatedDoorValue`，故**全部受影响**。
+视觉表现：门启动瞬间位置不是从曲线值瞬跳，而是 500 ms 线性过渡；
+门开↔关方向翻转时同样有过渡。上游这层的作用就是消除曲线值在方向
+翻转处的跳变。
+
+**尚未修复的原因**：0.36.0 的渲染路径由另一条会话的重构产出，
+插值层需要 per-（部件记录 × 位置实例 × 方向）的有状态对象，
+与重构中的 `BbModelTree` 状态管理耦合，需要在同一状态机里实现。
+
+**修复方案（待实施）**：
+1. 新增 `DoorMovementInterpolation` 等价类（500 ms 线性，
+   方向翻转时 `oldValue = 当前插值值; startMillis = now`）；
+2. 上游的 key 是 `doorZMultiplier + "_" + doorAnimationType + "_" + flipped`
+   ——即**每个（倍率, 类型, 翻转）组合一个插值器**，
+   缓存于 `PersistentVehicleData.doorMovementInterpolations`；
+   mtr-next 需在渲染侧维护同样的 per-key 缓存；
+3. `getDoorAnimationX`（上游 L347）**不走**插值层，只走 `getInterpolatedDoorValue`
+   （即 Z）走——注意 X 与 Z 的差别。
+
+### 另一处待核（低优先级）
+
+`BbModelTree.addElement`（L508-510）算出的 `centerX/Y/Z` **不含元素旋转**：
+
+```java
+final float centerX = (x + sizeX / 2.0F) / 16.0F;
+```
+
+而上游同名概念的 `Box`（`BlockbenchElement.java:48-58`）会把两个角点
+`rotateX/rotateY/rotateZ` 后再取边界。实测 ERIDU：787/970 元素（81%）
+带非零旋转，其中 779 个的 center 偏移 > 0.01 格，中位 0.51 格、最大 6.5 格。
+
+**但该字段当前仅被测试断言使用，渲染路径不消费**（渲染由 MC 的
+`ModelPart` 姿态系统处理旋转），因此**不是渲染缺陷**，只是元数据
+与上游 `Box` 语义不符。修复前应先确认 `center` 的用途。
 
 因此 0.35.4 **不发版**：工作区当时含另一会话未完成的渲染重构，
 构建产物会混入未验证代码；且纯数据层改动对用户无可见价值。
