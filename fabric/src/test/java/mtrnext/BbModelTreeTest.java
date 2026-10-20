@@ -49,6 +49,7 @@ public final class BbModelTreeTest {
 		testFlatModelFallback();
 		testTopLevelRotationForcedZero();
 		testNullResourceSafety();
+		testDoorInterpolation();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
@@ -302,6 +303,60 @@ public final class BbModelTreeTest {
 		check("位定义=null 不抛异常", defs != null && defs.isEmpty());
 		final var defs2 = mtrnext.client.render.PositionDefinitions4xLoader.load(null, "");
 		check("位定义=\"\" 不抛异常", defs2 != null);
+	}
+
+	/**
+	 * 门位移插值层（上游 {@code PersistentVehicleData.getInterpolatedDoorValue} →
+	 * {@code DoorMovementInterpolation} → {@code Interpolation(500)}）。
+	 * <p>
+	 * 语义：Z 位移不直接用曲线值，而是从<b>当前插值结果</b>用 500 ms 线性过渡到
+	 * 新曲线值——方向翻转时不会跳变。
+	 */
+	private static void testDoorInterpolation() {
+		System.out.println("[DoorMovementInterpolation 上游语义]");
+		final var interp = new mtrnext.client.render.DoorMovementInterpolation();
+
+		// 首次调用：startInterpolation=true，oldValue(0) != value(11) → 重启插值。
+		// 插值起点是旧值 0 ⇒ 返回 ~0，**不是**直接跳到 11。
+		final float first = interp.setAndGet(11.0, true);
+		check("首次调用从旧值起步（不跳到目标）", first >= 0.0F && first < 11.0F);
+
+		sleep(600);
+		// 同方向、同值：不重启插值，此时斜坡已完成 → 返回目标值
+		final float settled = interp.setAndGet(11.0, true);
+		check("同方向稳定后到达目标值", near(settled, 11.0F, 0.01F));
+
+		sleep(600);
+		final float beforeFlip = interp.setAndGet(11.0, true);
+		// 方向翻转（true → false）且值不同 → 重启插值，起点是**当前插值结果**
+		final float afterFlip = interp.setAndGet(0.0, false);
+		check("方向翻转时不跳变（从当前值续接）",
+				Math.abs(afterFlip - beforeFlip) < 1.0F && afterFlip > 1.0F);
+
+		sleep(600);
+		final float settledClose = interp.setAndGet(0.0, false);
+		check("关门斜坡完成后到达目标值", near(settledClose, 0.0F, 0.01F));
+
+		// key 规则：上游 doorZMultiplier + "_" + doorAnimationType + "_" + flipped
+		check("key 规则与上游一致",
+				"11.0_STANDARD_SLOW_true".equals(
+						mtrnext.client.render.DoorMovementInterpolation.key(11.0, "STANDARD_SLOW", true)));
+		check("flipped=false 时 key 后缀为 false",
+				"11.0_STANDARD_SLOW_false".equals(
+						mtrnext.client.render.DoorMovementInterpolation.key(11.0, "STANDARD_SLOW", false)));
+
+		// Interpolation.setValueDirect：立即跳到目标值
+		final var raw = new mtrnext.client.render.DoorMovementInterpolation.Interpolation(500);
+		raw.setValueDirect(7.0);
+		check("setValueDirect 立即生效", near((float) raw.getValue(), 7.0F, 0.001F));
+	}
+
+	private static void sleep(long ms) {
+		try {
+			Thread.sleep(ms);
+		} catch (final InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	// ------------------------------------------------------------------

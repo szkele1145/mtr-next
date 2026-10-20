@@ -38,6 +38,14 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	private final String trainId;
 	/** 本渲染器对应的列车实例（createTrainInstance 注入；门开度来源） */
 	private final TrainClient train;
+	/**
+	 * 门 Z 位移的插值器缓存（上游 {@code PersistentVehicleData} 的
+	 * {@code doorMovementInterpolations}）。
+	 * <p>
+	 * 上游按 {@code doorZMultiplier + "_" + doorAnimationType + "_" + flipped} 分键，
+	 * 每车一份——因为插值器带状态，跨车共享会串味。
+	 */
+	private final Map<String, DoorMovementInterpolation> doorInterpolations = new java.util.concurrent.ConcurrentHashMap<>();
 
 	/** 供 TrainTypeBridge 注册使用（无列车上下文，门位移退化为布尔） */
 	public BbModelTrainRenderer(String trainId) {
@@ -167,22 +175,31 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	/**
 	 * 门位移（像素）：上游
 	 * {@code partDetails.x + doorAnimationType.getDoorAnimationX(doorXMultiplier, partDetails.flipped, time)}
-	 * 与 {@code getInterpolatedDoorValue(..., doorZMultiplier, partDetails.flipped, ...)}。
+	 * 与 {@code partDetails.z + getInterpolatedDoorValue(doorAnimationType, doorZMultiplier, partDetails.flipped, ...)}。
 	 * <p>
 	 * {@code flipped} 传入曲线后由内部的 {@code copySign} 自动反号，
 	 * 因此镜像侧无需另算符号。
+	 * <p>
+	 * <b>Z 位移额外过一层 500 ms 线性插值</b>（上游
+	 * {@code PersistentVehicleData.getInterpolatedDoorValue} → {@code DoorMovementInterpolation}），
+	 * 用于消除开门↔关门方向翻转处的跳变；<b>X 位移不插值</b>（上游 L347 走
+	 * {@code getDoorAnimationX}，无插值层）。
 	 */
-	private static float[] doorOffsetPixels(Properties4xLoader.PartInfo info, boolean flipped,
+	private float[] doorOffsetPixels(Properties4xLoader.PartInfo info, boolean flipped,
 			float doorValue, boolean doorsOpen) {
 		if (info == null || (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)) {
 			return ZERO;
 		}
 		final DoorAnimation4x anim = DoorAnimation4x.parse(info.doorAnimationType);
 		final float time = doorsOpen ? doorValue : 0.0F;
-		return new float[]{
-				anim.getDoorAnimationX(info.doorXMultiplier, flipped, time),
-				anim.getDoorAnimationZ(info.doorZMultiplier, flipped, time, doorsOpen)
-		};
+		final float dx = anim.getDoorAnimationX(info.doorXMultiplier, flipped, time);
+		// 上游：曲线值 → 插值层（按 key 复用插值器）→ 与 doorOverride 取绝对值较大者
+		final float rawZ = anim.getDoorAnimationZ(info.doorZMultiplier, flipped, time, doorsOpen);
+		final String key = DoorMovementInterpolation.key(info.doorZMultiplier, info.doorAnimationType, flipped);
+		final DoorMovementInterpolation interpolation =
+				doorInterpolations.computeIfAbsent(key, k -> new DoorMovementInterpolation());
+		final float dz = interpolation.setAndGet(rawZ, doorsOpen);
+		return new float[]{dx, dz};
 	}
 
 	private static final float[] ZERO = {0.0F, 0.0F};
