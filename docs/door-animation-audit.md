@@ -14,6 +14,9 @@
 > **只在开门↔关门方向翻转时生效**，同方向变化不插值（与直觉相反）。
 > 另留两条待办：`opening` 应由门开度变化方向推导（现用布尔
 > `doorsOpen`）、门时序窗口/闪烁仍未接入渲染。
+> **2026-10-20 §五g**：0.36.3 已把门时序窗口与闪烁接入渲染、`opening`
+> 改为门开度变化方向；本节另记一条**语义偏差**——上游 flash 是
+> **per-part** 而非整层共享（ERIDU 上等价，其他车包可能出错）。
 
 ## 一、3.x 内置渲染器的门动画（不迁移）
 
@@ -554,4 +557,81 @@ flash 500/500、`lcdp_dooryincang` from=1）。
 
 因此 0.35.4 **不发版**：工作区当时含另一会话未完成的渲染重构，
 构建产物会混入未验证代码；且纯数据层改动对用户无可见价值。
+
+---
+
+## 五g、0.36.3：三项语义对齐已落地（2026-10-20 10:45）
+
+§五f 记录的两项待修（`opening` 语义、门时序窗口/闪烁未接入）已在 **0.36.3**
+一并修完。权威依据是上游 `ModelPropertiesPart.java:315-349`（`renderNormal` 全流程）。
+
+### 发布事实
+
+| 渠道 | 标识 |
+|---|---|
+| Modrinth | `0.36.3` / `QNLMUL7d` / 104278 B |
+| GitHub | `v0.36.3` / release `417948163` / asset `658075285` |
+| 提交 | `6c35d89` |
+| 自测 | `parserSelfTest` PASS=259 FAIL=0；`bbModelTreeTest` PASS=46 FAIL=0 |
+
+### 改动 1：`opening` = 门**运动方向**
+
+上游 L338：`opening = getAdjustedDoorMultiplier(...) > 0`（+1 开门 / -1 关门）。
+
+mtr-next 此前传 `doorsOpen`（门当前是否打开）。两个后果：
+
+1. **关门专用分段曲线永远取不到**。
+   `STANDARD_SLOW` 在 `!opening` 时走 `DoorAnimationType.java:142-151`：
+   ```
+   if (time > 0.2) return smoothEnds(1, doorMax, 0.2, 0.5, time);
+   else if (time > 0.1) return 1;
+   else return smoothEnds(0, 1, 0, 0.1, time);
+   ```
+   开门分支则 fall through 到 default 的 `smoothEnds(0, doorMax, 0, 0.5, time)`。
+   两者在 **t=0.15 处分别是 1 和 3.3** —— 传错 `opening` 会让关门时门**跳一下**。
+2. **门时序窗口选错分支**（opening 窗口 vs closing 窗口）。
+
+现改为：由门开度的**变化方向**推导（比上一帧大 = 开门中），
+每车保存一份上一帧门开度（`BbModelTrainRenderer.previousDoorValue`）。
+
+> YMTR 的 `renderCar` 只给 `doorLeftOpen` / `doorRightOpen` 两个布尔，
+> 没有方向信息 —— 这是与上游唯一的**接口层**差异，方向只能由变化率推导。
+
+### 改动 2：曲线的时间参数就是门开度本身
+
+上游 L347 传 `Math.max(doorValue, doorOverrideValue)` —— 是门开度，不是布尔。
+
+mtr-next 此前 `time = doorsOpen ? doorValue : 0.0F`，门关闭期间曲线被钉死在 0。
+现改为 `time = |doorValue|`：门开度随时间递减 → 曲线自然回退，
+关门专用曲线得以生效。
+
+### 改动 3：门时序窗口与闪烁接入渲染
+
+0.35.4 已实现 `PartInfo.shouldRenderAt` / `flashOn`，但**渲染路径从未调用**
+（此前所有部件无条件渲染）。现接上：
+
+| 上游位置 | 语义 | mtr-next 实现 |
+|---|---|---|
+| L339-345 | 门行程落在 `[from, until]` 毫秒窗口外 → 不渲染该部件 | `info.shouldRenderAt(doorValue, opening)` |
+| L317 / L320 | 闪烁熄灭 → `y = Integer.MAX_VALUE` | `info.flashOn(now)` |
+| L348 | `shouldRender` 为假 → `x = z = Integer.MAX_VALUE` | 推离视野 |
+
+**「推离视野」而非跳过绘制**：上游这么做是为了保持渲染批次与光照计算一致，
+本实现照做（`drawInstance` 中改 `ox/oy/oz`）。
+
+**层级闪烁**：上游的 `flashOnTime`/`flashOffTime` 是 `ModelPropertiesPart`
+（整层）属性；mtr-next 数据层挂在 `PartInfo` 上（与上游 schema 一致），
+故取**第一条**带闪烁配置的部件作为整层值 —— 一层共享一份配置，取第一条等价。
+
+ERIDU 实测命中：`doordengguan_n` from=100、`doordengshan_n` from=50 + flash 500/500、
+`lcdp_dooryincang` from=1。
+
+### 边界
+
+- `shouldRenderAt` 的区间判定与上游 `core_Utilities.java:61-63` 的 `isBetween`
+  **完全一致**（含边界、支持倒序区间）。
+- `DOOR_MOVE_TIME = 3200` 毫秒（`core/data/Vehicle.java:59`）作为门开度→毫秒的尺度。
+- **仍未覆盖**：`doorOverrideValue`（上游的开门道调试覆盖，YMTR 无对应接口）、
+  `openDoorways` 的逐部件匹配（上游按 Box 匹配门道）、`canOpen` 判定。
+  这三项上游能力在 YMTR 宿主下没有输入，**不是 bug，是宿主差异**。
 等渲染重构完成、整体验证通过后一并发布。
