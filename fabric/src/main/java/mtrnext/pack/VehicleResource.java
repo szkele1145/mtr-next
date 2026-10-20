@@ -218,13 +218,16 @@ public final class VehicleResource {
 		public final String textureResource;     // mtr:cheche1xa.png
 		public final String propertiesResource;  // mtr:properties_1fa88c30.json
 		public final boolean flipTextureV;
+		/** [0.35.3] definition_*.json 原始资源路径（位定义内容，镜像展开的依据） */
+		public final String positionDefinitionsResource;
 		final List<String> positionDefinitionNames;
 
-		private ModelLayer(String model, String texture, String properties, boolean flipV, List<String> posDefs) {
+		private ModelLayer(String model, String texture, String properties, boolean flipV, String posDefResource, List<String> posDefs) {
 			this.modelResource = model;
 			this.textureResource = texture;
 			this.propertiesResource = properties;
 			this.flipTextureV = flipV;
+			this.positionDefinitionsResource = posDefResource;
 			this.positionDefinitionNames = posDefs;
 		}
 
@@ -254,6 +257,7 @@ public final class VehicleResource {
 					str(o, "textureResource", ""),
 					str(o, "modelPropertiesResource", ""),
 					bool(o, "flipTextureV", true),
+					defRes,
 					posDefs);
 		}
 

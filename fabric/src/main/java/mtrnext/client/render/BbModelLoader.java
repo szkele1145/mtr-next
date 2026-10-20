@@ -60,28 +60,75 @@ public final class BbModelLoader {
 	private static final Map<String, List<BbBox>> ANNOTATED = new ConcurrentHashMap<>();
 
 	public static List<BbBox> loadAnnotated(ResourceManager manager, String modelResource, String propertiesResource) {
+		return loadAnnotated(manager, modelResource, propertiesResource, "");
+	}
+
+	/**
+	 * [0.35.3] 载入并标注（带位定义 → 镜像展开）。
+	 *
+	 * @param positionDefinitionsResource definition_*.json 资源路径（可空）
+	 */
+	public static List<BbBox> loadAnnotated(ResourceManager manager, String modelResource,
+			String propertiesResource, String positionDefinitionsResource) {
 		if (modelResource == null || modelResource.isEmpty()) {
 			return java.util.Collections.emptyList();
 		}
-		return ANNOTATED.computeIfAbsent(modelResource + "|" + propertiesResource,
+		return ANNOTATED.computeIfAbsent(modelResource + "|" + propertiesResource + "|" + positionDefinitionsResource,
 				k -> annotate(load(manager, modelResource),
 						propertiesResource == null || propertiesResource.isEmpty()
-								? null : Properties4xLoader.load(manager, propertiesResource).parts));
+								? null : Properties4xLoader.load(manager, propertiesResource).parts,
+						PositionDefinitions4xLoader.load(manager, positionDefinitionsResource)));
 	}
 
-	/** [0.35] 把 parts[] 的门参数（倍率/动画型/侧别）写入盒字段；非门盒字段清零 */
+	/**
+	 * [0.35] 把 parts[] 的门参数（倍率/动画型/侧别）写入盒字段；非门盒字段清零
+	 */
 	private static List<BbBox> annotate(List<BbBox> boxes, List<Properties4xLoader.PartInfo> parts) {
+		return annotate(boxes, parts, null);
+	}
+
+	/**
+	 * [0.35.3] 标注 + 镜像展开。
+	 *
+	 * @param posDefs 位定义表（definition_*.json：名字 → 位置组）；可为 null
+	 */
+	private static List<BbBox> annotate(List<BbBox> boxes, List<Properties4xLoader.PartInfo> parts,
+			Map<String, PositionDefinitions4xLoader.PositionGroup> posDefs) {
 		if (boxes == null) {
 			return null;
+		}
+		// [0.35.3] 顶层组 → 是否有 flipped 副本。
+		// 上游镜像粒度 = 整个 modelPart（顶层 outliner 组），故按顶层组判定。
+		final java.util.Set<String> mirroredGroups = new java.util.HashSet<>();
+		if (posDefs != null && parts != null) {
+			for (final Properties4xLoader.PartInfo p : parts) {
+				for (final String defName : p.positionDefinitionNames) {
+					final PositionDefinitions4xLoader.PositionGroup g = posDefs.get(defName);
+					if (g != null && !g.positionsFlipped.isEmpty()) {
+						for (final String n : p.names) {
+							mirroredGroups.add(n);
+						}
+					}
+				}
+			}
 		}
 		for (final BbBox box : boxes) {
 			box.doorXMult = 0;
 			box.doorZMult = 0;
 			box.doorAnim = null;
 			box.doorSide = 0;
+			box.mirrorNeeded = false;
+			box.doorFlipped = false;
 			if (parts == null || box.groupPath.isEmpty()) {
 				continue;
 			}
+			// 顶层组 = groupPath 首元素（上游 nameToPart 的键即顶层组名）
+			final String topGroup = box.groupPath.get(0);
+			// [0.35.3] 镜像双条件：①几何只建单侧（singleSidedGroup，对称组如
+			// end/hand 上游镜像会与对面正本重叠，跳过）；②组引用了含翻转位
+			// 的位定义（上游 iteratePositions 只对 positionsFlipped 非空的
+			// 定义画镜像副本——FLIPPED 槽即镜像）。
+			box.mirrorNeeded = box.singleSidedGroup && mirroredGroups.contains(topGroup);
 			for (final Properties4xLoader.PartInfo p : parts) {
 				if (p.doorXMultiplier == 0.0F && p.doorZMultiplier == 0.0F) {
 					continue; // 非门部件（上游 isDoor() 同判定）
@@ -99,6 +146,9 @@ public final class BbModelLoader {
 				box.doorXMult = p.doorXMultiplier;
 				box.doorZMult = p.doorZMultiplier;
 				box.doorAnim = DoorAnimation4x.parse(p.doorAnimationType);
+				// [0.35.3] 门位移方向：若该 part 的位定义只含 positionsFlipped
+				// （上游 flipped=true → copySign 反号），则门位移需反号。
+				box.doorFlipped = isFlippedOnly(p, posDefs);
 				// 侧别：盒质心 X（MC 格，已镜像）。ERIDU 门组质心 |cx|≈1.25 格；
 				// 阈值 0.05 格内视为中置（两侧门值取大者，保险语义）。
 				final float cx = (box.x1 + box.x2) / 2.0F;
@@ -107,6 +157,28 @@ public final class BbModelLoader {
 			}
 		}
 		return boxes;
+	}
+
+	/**
+	 * [0.35.3] 该 part 记录是否引用了"只含翻转位"的位定义（上游 flipped=true 槽）。
+	 * <p>
+	 * 上游 iteratePositions 同时遍历两个列表，flipped 位额外传 flipped=true；
+	 * mtr-next 的 bbmodel 几何只有一份（+X 半边），flipped 副本由
+	 * mirrorNeeded 统一绘制，故此处只作标记（本体/镜像的位移符号由
+	 * drawMirrorPair 按 flipped=false/true 固定给出）。
+	 */
+	private static boolean isFlippedOnly(Properties4xLoader.PartInfo p,
+			Map<String, PositionDefinitions4xLoader.PositionGroup> posDefs) {
+		if (posDefs == null) {
+			return false;
+		}
+		for (final String defName : p.positionDefinitionNames) {
+			final PositionDefinitions4xLoader.PositionGroup g = posDefs.get(defName);
+			if (g != null && !g.positionsFlipped.isEmpty()) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static List<BbBox> parse(ResourceManager manager, String modelResource) {
@@ -163,13 +235,48 @@ public final class BbModelLoader {
 			if (box != null) {
 				final List<String> path = groupPaths.get(str(element, "uuid", ""));
 				box.groupPath = path != null ? path : java.util.List.of();
+				box.topGroup = box.groupPath.isEmpty() ? "" : box.groupPath.get(0);
 				box.uvScaleU = resW <= 0 ? 1.0F : 1.0F / resW;
 				box.uvScaleV = resH <= 0 ? 1.0F : 1.0F / resH;
 				boxes.add(box);
 			}
 		}
+		// [0.35.3] 顶层组的 X 侧分布 → 判定该组是否"只建了一侧"。
+		// 上游镜像粒度 = 整个 modelPart（顶层 outliner 组），但上游是把
+		// positions 与 positionsFlipped 各渲染一次；几何本就左右对称的组
+		// （如 ERIDU 的 end/hand）两侧都有盒，再镜像会重叠。故只对
+		// "单侧组"补镜像——既补齐缺失的另一侧，又不制造重叠。
+		final Map<String, int[]> sideStats = new java.util.HashMap<>(); // 组 → {右,左,中}
+		for (final BbBox box : boxes) {
+			if (box.topGroup.isEmpty()) {
+				continue;
+			}
+			final int[] s = sideStats.computeIfAbsent(box.topGroup, k -> new int[3]);
+			final float cx = (box.x1 + box.x2) / 2.0F;
+			if (cx > SIDE_THRESHOLD) {
+				s[0]++;
+			} else if (cx < -SIDE_THRESHOLD) {
+				s[1]++;
+			} else {
+				s[2]++;
+			}
+		}
+		for (final BbBox box : boxes) {
+			if (box.topGroup.isEmpty()) {
+				continue;
+			}
+			final int[] s = sideStats.get(box.topGroup);
+			if (s == null) {
+				continue;
+			}
+			// 单侧组：只在一侧有几何 → 另一侧靠镜像补齐
+			box.singleSidedGroup = (s[0] > 0) != (s[1] > 0);
+		}
 		return boxes;
 	}
+
+	/** [0.35.3] 判定"单侧"的中置阈值（MC 格）——对应 bbmodel 像素 5px */
+	private static final float SIDE_THRESHOLD = 5.0F / 16.0F;
 
 	/**
 	 * [0.34.3] 递归 outliner：为每个 element uuid 记录从根到叶的祖先组名链。
@@ -286,7 +393,13 @@ public final class BbModelLoader {
 	 * 属纯数据逻辑，可离线回归。生产代码不调用。
 	 */
 	public static List<BbBox> annotateForTest(List<BbBox> boxes, List<Properties4xLoader.PartInfo> parts) {
-		return annotate(boxes, parts);
+		return annotate(boxes, parts, null);
+	}
+
+	/** [0.35.3] 离线自测入口：带位定义表（镜像展开） */
+	public static List<BbBox> annotateForTest(List<BbBox> boxes, List<Properties4xLoader.PartInfo> parts,
+			Map<String, PositionDefinitions4xLoader.PositionGroup> posDefs) {
+		return annotate(boxes, parts, posDefs);
 	}
 
 	/**
@@ -394,6 +507,33 @@ public final class BbModelLoader {
 		public DoorAnimation4x doorAnim = null;
 		/** 门所在侧：-1=车体左(X 负)、+1=车体右(X 正)、0=中置/不区分 */
 		public int doorSide = 0;
+		/** [0.35.3] 顶层 outliner 组名（上游 nameToPart 的键，见 DynamicVehicleModel.java:41-62） */
+		public String topGroup = "";
+		/**
+		 * [0.35.3] 该顶层组的几何是否只建了一侧（只有 +X 或只有 −X）。
+		 * <p>
+		 * 实测 ERIDU：{@code men2}/{@code men3}/{@code win}/{@code door} 等
+		 * 只建 +X 半边（另一侧靠上游 flipped 副本补齐）；而 {@code end}/
+		 * {@code hand} 等本身左右对称（两侧都有盒）——上游若也给它们画镜像
+		 * 副本会与对面正本重叠，故 mtr-next 对对称组跳过镜像。
+		 */
+		public boolean singleSidedGroup = false;
+		/**
+		 * [0.35.3] 是否需要绘制镜像副本（上游 positionsFlipped 语义）。
+		 * <p>
+		 * 上游 {@code ModelPropertiesPart.iteratePositions}
+		 * （L654-656）把 {@code positions} 与 {@code positionsFlipped} <b>都渲染</b>：
+		 * 前者 flipped=false，后者 X 取反且 flipped=true。上游渲染时
+		 * {@code partDetails.flipped ? Math.PI : 0} 绕 Y 轴转 180°
+		 * （{@code ModelPropertiesPart.java:364}），即顶点逐点 (x,z)→(−x,−z)。
+		 * <p>
+		 * 实测 ERIDU 的 {@code men2}/{@code win}/{@code door} 等顶层组
+		 * <b>只建了 +X 半边</b>（men2 x∈[19,20]；win R=24 L=0），
+		 * 另一侧完全靠 flipped 副本补齐 → 缺它等于左半侧车门/车窗全无。
+		 */
+		public boolean mirrorNeeded = false;
+		/** [0.35.3] 镜像副本：门位移方向需反号（上游 copySign(abs, (flipped?-1:1)*mult)） */
+		public boolean doorFlipped = false;
 
 		BbBox(boolean isDoor) {
 			this.isDoor = isDoor;

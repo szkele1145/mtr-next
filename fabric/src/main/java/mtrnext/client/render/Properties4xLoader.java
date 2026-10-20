@@ -136,6 +136,15 @@ public final class Properties4xLoader {
 			info.condition = str(p, "condition", "NORMAL");
 			info.renderStage = str(p, "renderStage", "EXTERIOR");
 			info.type = str(p, "type", "NORMAL");
+			// [0.35.3] 位定义名（上游 ModelPropertiesPart.positionDefinitions）：
+			// 指向 definition_*.json 里的位置组，决定该部件的 flipped 归属。
+			if (p.has("positionDefinitions") && p.get("positionDefinitions").isJsonArray()) {
+				for (final com.google.gson.JsonElement d : p.getAsJsonArray("positionDefinitions")) {
+					if (d != null && d.isJsonPrimitive()) {
+						info.positionDefinitionNames.add(d.getAsString());
+					}
+				}
+			}
 			out.add(info);
 		}
 		return java.util.Collections.unmodifiableList(out);
@@ -145,6 +154,8 @@ public final class Properties4xLoader {
 	public static final class PartInfo {
 		/** 匹配 outliner 分组名 */
 		public final java.util.List<String> names = new java.util.ArrayList<>();
+		/** [0.35.3] 位定义名（上游 positionDefinitions；决定 flipped 归属） */
+		public final java.util.List<String> positionDefinitionNames = new java.util.ArrayList<>();
 		public float doorXMultiplier = 0.0F;
 		public float doorZMultiplier = 0.0F;
 		public String doorAnimationType = "STANDARD";

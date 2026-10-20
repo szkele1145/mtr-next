@@ -36,6 +36,8 @@ public final class ParserSelfTest {
 		testBbModelScaleAndUv();
 		testDoorAnnotation();
 		testDoorOverlapDetection();
+		testPositionDefinitionsMirror();
+		testRealPackMirror();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
@@ -632,6 +634,250 @@ public final class ParserSelfTest {
 						""")), eriduParts);
 		check("单门不报", mtrnext.client.render.BbModelLoader.detectDoorOverlaps(single).isEmpty());
 		check("null 输入安全", mtrnext.client.render.BbModelLoader.detectDoorOverlaps(null).isEmpty());
+	}
+
+	/**
+	 * [0.35.3] 位定义 → 镜像展开（上游 positionsFlipped 语义）。
+	 * <p>
+	 * 用真实 ERIDU 数据模式：men2 有两条 part——一条位定义只含 positions
+	 * （正位），另一条只含 positionsFlipped（翻转位）。判定：
+	 * 1) 顶层组 men2 的盒 mirrorNeeded=true（该组有 flipped 位）；
+	 * 2) 只含 positionsFlipped 的 part 记录 doorFlipped=true →
+	 *    门位移曲线反号（上游 copySign(abs,(flipped?-1:1)*mult)）。
+	 */
+	private static void testPositionDefinitionsMirror() {
+		System.out.println("[位定义镜像展开（上游 positionsFlipped）]");
+
+		// 位定义表：模拟 ERIDU definition_*.json 的一对定义
+		final var posDefs = mtrnext.client.render.PositionDefinitions4xLoader.parseRoot(json("""
+				{ "positionDefinitions": [
+				  { "name": "defNormal",  "positions": [{"x":0.0,"y":0.0,"z":0.0}], "positionsFlipped": [] },
+				  { "name": "defFlipped", "positions": [], "positionsFlipped": [{"x":0.0,"y":0.0,"z":0.0}] },
+				  { "name": "defBoth",    "positions": [{"x":2.0,"y":0.0,"z":0.0}], "positionsFlipped": [{"x":2.0,"y":0.0,"z":0.0}] }
+				] }
+				"""));
+		check("位定义解析数=3", posDefs.size() == 3);
+		check("defNormal 有正位无翻转位", posDefs.get("defNormal").hasNormal()
+				&& posDefs.get("defNormal").positionsFlipped.isEmpty());
+		check("defFlipped 只含翻转位", posDefs.get("defFlipped").flippedOnly());
+		check("defBoth 两位都有", posDefs.get("defBoth").hasNormal()
+				&& !posDefs.get("defBoth").positionsFlipped.isEmpty());
+
+		// bbmodel：men2 组一个盒（只建 +X 半边——真实 ERIDU 模式）
+		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+				{ "elements": [
+				  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
+				  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
+				"""));
+
+		// properties：两条 men2 part（正位 + 翻转位），ERIDU 真实模式
+		final var parts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["men2"], "doorZMultiplier": 11.0, "doorAnimationType": "STANDARD_SLOW",
+				    "positionDefinitions": ["defNormal"] },
+				  { "names": ["men2"], "doorZMultiplier": 11.0, "doorAnimationType": "STANDARD_SLOW",
+				    "positionDefinitions": ["defFlipped"] } ] }
+				"""));
+		final var annotated = mtrnext.client.render.BbModelLoader.annotateForTest(boxes, parts, posDefs);
+		check("镜像标注后盒数=1", annotated.size() == 1);
+		check("men2 顶层组 mirrorNeeded=true", annotated.get(0).mirrorNeeded);
+		check("men2 是动画门", annotated.get(0).isAnimatedDoor());
+		check("men2 dz=+11", near(annotated.get(0).doorZMult, 11.0F));
+		// 第一条匹配的 part 是 defNormal → doorFlipped=false（本体方向）
+		check("本体 doorFlipped=false", !annotated.get(0).doorFlipped);
+
+		// 只有翻转位 part 的场景：门位移应反号
+		final var partsFlip = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["men2"], "doorZMultiplier": 11.0, "doorAnimationType": "STANDARD_SLOW",
+				    "positionDefinitions": ["defFlipped"] } ] }
+				"""));
+		final var annotatedFlip = mtrnext.client.render.BbModelLoader.annotateForTest(
+				mtrnext.client.render.BbModelLoader.parseForTest(json("""
+						{ "elements": [
+						  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
+						  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
+						""")), partsFlip, posDefs);
+		check("翻转位 part → doorFlipped=true", annotatedFlip.get(0).doorFlipped);
+		check("翻转位 part → mirrorNeeded=true", annotatedFlip.get(0).mirrorNeeded);
+		// 门曲线反号实证：STANDARD_SLOW 开门路径 fall through 到上游 default
+		// （DoorAnimationType.java L152-153）→ smoothEnds(0, doorMax, 0, 0.5, t)。
+		// doorMax=11，t=0.5：11*(1-cos(π))/2 = 11。
+		// flipped=false → +11；flipped=true → copySign 反号 = -11。
+		final var anim = annotatedFlip.get(0).doorAnim;
+		check("flipped=false 曲线值 +11", near(anim.getDoorAnimationZ(11.0F, false, 0.5F, true), 11.0F, 0.001F));
+		check("flipped=true 曲线值 −11", near(anim.getDoorAnimationZ(11.0F, true, 0.5F, true), -11.0F, 0.001F));
+		// t=0.25（半程）：11*(1-cos(π/2))/2 = 5.5
+		check("flipped=false t=0.25 曲线值 +5.5", near(anim.getDoorAnimationZ(11.0F, false, 0.25F, true), 5.5F, 0.001F));
+		check("flipped=true t=0.25 曲线值 −5.5", near(anim.getDoorAnimationZ(11.0F, true, 0.25F, true), -5.5F, 0.001F));
+
+		// 无位定义（defNormal-only part）→ 不镜像
+		final var partsNormal = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["men2"], "doorZMultiplier": 11.0, "doorAnimationType": "STANDARD_SLOW",
+				    "positionDefinitions": ["defNormal"] } ] }
+				"""));
+		final var annotatedNormal = mtrnext.client.render.BbModelLoader.annotateForTest(
+				mtrnext.client.render.BbModelLoader.parseForTest(json("""
+						{ "elements": [
+						  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
+						  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
+						""")), partsNormal, posDefs);
+		check("正位 part（组内无翻转位）→ mirrorNeeded=false", !annotatedNormal.get(0).mirrorNeeded);
+		check("正位 part → doorFlipped=false", !annotatedNormal.get(0).doorFlipped);
+
+		// posDefs 为 null → 全部退化不镜像
+		final var annotatedNull = mtrnext.client.render.BbModelLoader.annotateForTest(boxes, parts, null);
+		check("null 位定义 → 不镜像", !annotatedNull.get(0).mirrorNeeded);
+		check("null 位定义 → doorFlipped=false", !annotatedNull.get(0).doorFlipped);
+
+		// [0.35.3] 对称组（两侧都有几何）→ 不画镜像副本。
+		// 上游会给对称组也画 flipped 副本（与对面正本重叠）；mtr-next 跳过，
+		// 避免 Z-fighting / 重复面。
+		final var symBoxes = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+				{ "elements": [
+				  { "uuid": "e1", "name": "cube", "from": [304,0,0], "to": [320,64,128] },
+				  { "uuid": "e2", "name": "cube", "from": [-320,0,0], "to": [-304,64,128] } ],
+				  "outliner": [ { "name": "end", "children": ["e1","e2"] } ] }
+				"""));
+		final var symParts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [
+				  { "names": ["end"], "positionDefinitions": ["defNormal"] },
+				  { "names": ["end"], "positionDefinitions": ["defFlipped"] } ] }
+				"""));
+		final var symAnn = mtrnext.client.render.BbModelLoader.annotateForTest(symBoxes, symParts, posDefs);
+		check("对称组 2 盒", symAnn.size() == 2);
+		check("对称组 → 不镜像（避免与对面正本重叠）", !symAnn.get(0).mirrorNeeded && !symAnn.get(1).mirrorNeeded);
+
+		// [0.35.3] 单侧 + 翻转位 → 镜像；单侧 + 仅正位 → 不镜像
+		final var oneSidedNormalOnly = mtrnext.client.render.BbModelLoader.annotateForTest(
+				mtrnext.client.render.BbModelLoader.parseForTest(json("""
+						{ "elements": [
+						  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
+						  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
+						""")), partsNormal, posDefs);
+		check("单侧组但仅正位 → 不镜像", !oneSidedNormalOnly.get(0).mirrorNeeded);
+	}
+
+	/**
+	 * [0.35.3] 真实 ERIDU 车包端到端验证（离线读文件，不依赖 Minecraft 运行时）。
+	 * <p>
+	 * 验证目标：
+	 * ① eridudanguei 的 men2/men3/men2_n/men3_n/win/win_n/door/door_n 等
+	 *    顶层组几何只建 +X 半边 → 应判为需镜像（补齐左半侧）；
+	 * ② end/hand 等本身左右对称的组 → 不应镜像（避免与对面正本重叠）；
+	 * ③ 门组 men2/men3 的 dz 倍率分别为 +11 / −11（ERIDU 实测）。
+	 * <p>
+	 * 车包路径不存在时整体跳过（不判失败）——保证裸机也能跑自测。
+	 */
+	private static void testRealPackMirror() {
+		System.out.println("[真实 ERIDU 车包镜像判定]");
+		final java.io.File packDir = new java.io.File(
+				"F:\\vibe coding工程\\mtr-turbo\\build\\eridu-pack\\assets\\mtr");
+		if (!packDir.isDirectory()) {
+			System.out.println("  跳过：车包不存在 " + packDir.getAbsolutePath());
+			return;
+		}
+
+		// 汇总所有 definition_*.json 的位定义
+		final java.util.Map<String, mtrnext.client.render.PositionDefinitions4xLoader.PositionGroup> allDefs =
+				new java.util.HashMap<>();
+		final java.io.File[] defFiles = packDir.listFiles((d, n) -> n.startsWith("definition_") && n.endsWith(".json"));
+		if (defFiles == null || defFiles.length == 0) {
+			System.out.println("  跳过：无 definition_*.json");
+			return;
+		}
+		for (final java.io.File f : defFiles) {
+			final String txt = readUtf8(f);
+			if (txt == null) {
+				continue;
+			}
+			allDefs.putAll(mtrnext.client.render.PositionDefinitions4xLoader.parseRoot(json(txt)));
+		}
+		check("ERIDU 位定义数 ≥ 100", allDefs.size() >= 100);
+
+		// 汇总所有 properties_*.json 的 parts
+		final java.util.List<mtrnext.client.render.Properties4xLoader.PartInfo> allParts = new java.util.ArrayList<>();
+		final java.io.File[] propFiles = packDir.listFiles((d, n) -> n.startsWith("properties_") && n.endsWith(".json"));
+		for (final java.io.File f : propFiles) {
+			final String txt = readUtf8(f);
+			if (txt == null) {
+				continue;
+			}
+			allParts.addAll(mtrnext.client.render.Properties4xLoader.parseParts(json(txt)));
+		}
+		check("ERIDU part 记录数 ≥ 100", allParts.size() >= 100);
+
+		// 解析主车体 bbmodel（5 MB，970 元素）
+		final java.io.File bb = new java.io.File(packDir, "eridudanguei.bbmodel");
+		final String bbTxt = readUtf8(bb);
+		if (bbTxt == null) {
+			System.out.println("  跳过：eridudanguei.bbmodel 不可读");
+			return;
+		}
+		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(json(bbTxt));
+		check("ERIDU 主车体盒数 ≥ 900", boxes.size() >= 900);
+
+		final var ann = mtrnext.client.render.BbModelLoader.annotateForTest(boxes, allParts, allDefs);
+
+		// ① 门组：单侧 + 含翻转位 → 镜像
+		final java.util.Map<String, java.util.List<mtrnext.client.render.BbModelLoader.BbBox>> byGroup =
+				new java.util.HashMap<>();
+		for (final var b : ann) {
+			if (!b.topGroup.isEmpty()) {
+				byGroup.computeIfAbsent(b.topGroup, k -> new java.util.ArrayList<>()).add(b);
+			}
+		}
+		for (final String g : new String[]{"men2", "men3", "men2_n", "men3_n", "win", "win_n", "door", "door_n"}) {
+			final var gb = byGroup.get(g);
+			if (gb == null) {
+				check("ERIDU 组 " + g + " 存在", false);
+				continue;
+			}
+			check("ERIDU " + g + " 是单侧组", gb.get(0).singleSidedGroup);
+			check("ERIDU " + g + " 需镜像", gb.get(0).mirrorNeeded);
+		}
+
+		// ② 对称组 end/hand → 不镜像
+		for (final String g : new String[]{"end", "end_n", "hand", "hand_n"}) {
+			final var gb = byGroup.get(g);
+			if (gb == null) {
+				continue;
+			}
+			check("ERIDU " + g + " 是双侧组", !gb.get(0).singleSidedGroup);
+			check("ERIDU " + g + " 不镜像", !gb.get(0).mirrorNeeded);
+		}
+
+		// ③ 门倍率：men2 dz=+11，men3 dz=−11（ERIDU 实测）
+		final var men2 = byGroup.get("men2");
+		final var men3 = byGroup.get("men3");
+		if (men2 != null) {
+			check("ERIDU men2 dz=+11", near(men2.get(0).doorZMult, 11.0F, 0.001F));
+			check("ERIDU men2 是动画门", men2.get(0).isAnimatedDoor());
+		}
+		if (men3 != null) {
+			check("ERIDU men3 dz=−11", near(men3.get(0).doorZMult, -11.0F, 0.001F));
+		}
+
+		// ④ 镜像计数：需镜像的组数应在合理区间（实测 64 个含翻转位组，
+		//    其中单侧组约 30 个）
+		int mirrorGroups = 0;
+		for (final var e : byGroup.entrySet()) {
+			if (e.getValue().get(0).mirrorNeeded) {
+				mirrorGroups++;
+			}
+		}
+		System.out.println("  需镜像的顶层组数：" + mirrorGroups + " / 总组数 " + byGroup.size());
+		check("需镜像组数在 10..60", mirrorGroups >= 10 && mirrorGroups <= 60);
+	}
+
+	/** 读 UTF-8 文本（失败返回 null） */
+	private static String readUtf8(java.io.File f) {
+		try {
+			return new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+		} catch (final Exception e) {
+			return null;
+		}
 	}
 
 	/** 浮点近似比较（容差 1e-4） */

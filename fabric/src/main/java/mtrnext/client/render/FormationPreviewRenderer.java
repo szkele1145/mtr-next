@@ -56,7 +56,8 @@ public final class FormationPreviewRenderer {
 				// 非门部件仍沿用旧的固定 Z 偏移（3.x 语义）。
 				for (final VehicleResource.ModelLayer layer : res.models) {
 					final List<BbModelLoader.BbBox> boxes = BbModelLoader.loadAnnotated(
-							Minecraft.getInstance().getResourceManager(), layer.modelResource, layer.propertiesResource);
+							Minecraft.getInstance().getResourceManager(), layer.modelResource, layer.propertiesResource,
+							layer.positionDefinitionsResource);
 					if (boxes == null || boxes.isEmpty()) {
 						continue;
 					}
@@ -64,10 +65,14 @@ public final class FormationPreviewRenderer {
 							net.minecraft.client.renderer.RenderType.entityCutoutNoCull(
 									BbModelTrainRenderer.texLocation(layer.textureResource)));
 					// 与主渲染器共享 winding，避免两处顶点顺序分道扬镳
+					// [0.35.3] 镜像副本同主渲染器：men2/win/door 等顶层组只建
+					// +X 半边，预览里也需靠 flipped 副本补齐另一侧。
 					for (final BbModelLoader.BbBox box : boxes) {
-						if (box.isAnimatedDoor()) {
-							final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, false, 1.0F) / 16.0F;
-							final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, false, 1.0F, true) / 16.0F;
+						if (box.mirrorNeeded) {
+							BbModelTrainRenderer.drawMirrorPair(vc, pose, box, 1.0F, true, -0.75F);
+						} else if (box.isAnimatedDoor()) {
+							final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, box.doorFlipped, 1.0F) / 16.0F;
+							final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, box.doorFlipped, 1.0F, true) / 16.0F;
 							BbModelTrainRenderer.drawBoxFaces(vc, pose, box, dx, dz);
 						} else {
 							BbModelTrainRenderer.drawBoxFaces(vc, pose, box, box.isDoor ? -0.75F : 0.0F);

@@ -73,8 +73,10 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 				// [0.35] 门动画需要 parts[]（门倍率/动画型），故用双键缓存的
 				// loadAnnotated（模型 + 属性）——同一 bbmodel 可被不同 properties
 				// 引用，单键缓存会串门参数。
+				// [0.35.3] 第三键 = positionDefinitionsResource（位定义 → 镜像展开）。
 				final List<BbModelLoader.BbBox> boxes = BbModelLoader.loadAnnotated(
-						Minecraft.getInstance().getResourceManager(), layer.modelResource, layer.propertiesResource);
+						Minecraft.getInstance().getResourceManager(), layer.modelResource, layer.propertiesResource,
+						layer.positionDefinitionsResource);
 				if (boxes == null || boxes.isEmpty()) {
 					continue;
 				}
@@ -85,13 +87,14 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 					// 倍率单位 = Blockbench 像素（16 像素 = 1 格），曲线值
 					// × 倍率后 /16 转格。X 走塞拉门外摆，Z 走滑门滑动。
 					// 非门部件沿用旧的固定 Z 偏移（3.x 语义，无倍率可依）。
-					if (box.isAnimatedDoor()) {
-						// flipped 恒 false：mtr-next 尚未实现上游 positionDefinitions
-						// 的 positionsFlipped 位置组（上游 ModelPropertiesPart
-						// L649-650 会整体镜像 X/Z 并把 flipped 传进曲线）。
-						// bbmodel 自身不含朝向信息，故此处按未镜像处理。
-						final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, false, doorSlide) / 16.0F;
-						final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, false, doorSlide, open) / 16.0F;
+					// [0.35.3] 镜像副本（上游 positionsFlipped）：ERIDU 的
+					// men2/win/door 等顶层组只建 +X 半边，另一侧全靠 flipped
+					// 副本补齐——不画镜像 = 左半侧车门/车窗全无。
+					if (box.mirrorNeeded) {
+						drawMirrorPair(vc, pose, box, doorSlide, open, doorOffset);
+					} else if (box.isAnimatedDoor()) {
+						final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, box.doorFlipped, doorSlide) / 16.0F;
+						final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, box.doorFlipped, doorSlide, open) / 16.0F;
 						drawBoxFaces(vc, pose, box, dx, dz);
 					} else {
 						drawBoxFaces(vc, pose, box, box.isDoor ? doorOffset : 0.0F);
@@ -101,6 +104,36 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			matrices.popPose();
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("bbmodel renderCar failed", t);
+		}
+	}
+
+	/**
+	 * [0.35.3] 绘制一对：本体 + 镜像副本（上游 positionsFlipped 语义）。
+	 * <p>
+	 * 上游镜像粒度 = 整个 modelPart（顶层 outliner 组）：同一份几何渲染两次，
+	 * 第二次绕 Y 轴转 180°（{@code ModelPropertiesPart.java:364}），顶点逐点
+	 * {@code (x,z)→(−x,−z)}（{@code ModelPropertiesPart.addBox} L649-650 同款）。
+	 * <p>
+	 * 门位移：上游 {@code getDoorAnimationX(mult, flipped, t)} 内部用
+	 * {@code copySign(abs, (flipped?-1:1)*mult)}（{@code DoorAnimationType.java}），
+	 * 故镜像副本传 flipped=true 即自动反号。
+	 */
+	static void drawMirrorPair(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
+			BbModelLoader.BbBox box, float doorSlide, boolean open, float doorOffset) {
+		if (box.isAnimatedDoor()) {
+			// 本体：上游 positions 槽 → flipped=false
+			final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, false, doorSlide) / 16.0F;
+			final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, false, doorSlide, open) / 16.0F;
+			drawBoxFaces(vc, pose, box, dx, dz, false);
+			// 镜像副本：上游 positionsFlipped 槽 → flipped=true
+			// （上游 copySign(abs,(flipped?-1:1)*mult) 自动反号）
+			final float mdx = box.doorAnim.getDoorAnimationX(box.doorXMult, true, doorSlide) / 16.0F;
+			final float mdz = box.doorAnim.getDoorAnimationZ(box.doorZMult, true, doorSlide, open) / 16.0F;
+			drawBoxFaces(vc, pose, box, mdx, mdz, true);
+		} else {
+			final float dz = box.isDoor ? doorOffset : 0.0F;
+			drawBoxFaces(vc, pose, box, 0.0F, dz, false);
+			drawBoxFaces(vc, pose, box, 0.0F, dz, true);
 		}
 	}
 
@@ -126,47 +159,107 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 * @param dz Z 轴位移（格）。滑门沿车长方向滑动。
 	 */
 	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dx, float dz) {
+		drawBoxFaces(vc, pose, box, dx, dz, false);
+	}
+
+	/**
+	 * [0.35.3] 逐面绘制一盒六面，支持 X/Z 双轴位移 + 镜像副本。
+	 * <p>
+	 * 镜像语义（上游）：{@code partDetails.flipped ? Math.PI : 0} 绕 Y 轴转 180°
+	 * （{@code ModelPropertiesPart.java:364}）——刚体旋转保定向，故顶点逐点
+	 * {@code (x,z)→(−x,−z)}，且每面的绕向（winding）需同步反转，否则法线朝内。
+	 * <p>
+	 * UV 不变（跟着面走），与上游刚体旋转一致。
+	 *
+	 * @param mirror true = 画镜像副本（上游 flipped 位）
+	 */
+	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
+			BbModelLoader.BbBox box, float dx, float dz, boolean mirror) {
 		// bbmodel Y 向下 → MC Y 向上的翻转由 from/to 交换 y 实现
 		final float y1 = -box.y2, y2 = -box.y1;
 		// 门位移：整盒平移（顶点 + 偏移量）
-		final float x1 = box.x1 + dx, x2 = box.x2 + dx;
-		final float z1 = box.z1 + dz, z2 = box.z2 + dz;
+		float x1 = box.x1 + dx, x2 = box.x2 + dx;
+		float z1 = box.z1 + dz, z2 = box.z2 + dz;
+		if (mirror) {
+			// 绕 Y 轴 π：x、z 同时取反
+			x1 = -x1;
+			x2 = -x2;
+			z1 = -z1;
+			z2 = -z2;
+		}
 
 		if (box.uvDown != null) {
 			// down 面：从下方看逆时针
-			quad(vc, pose,
-					x1, y2, z2, x2, y2, z2, x2, y2, z1, x1, y2, z1,
-					box.uvDown, box.uvScaleU, box.uvScaleV);
+			if (mirror) {
+				quad(vc, pose,
+						x1, y2, z1, x2, y2, z1, x2, y2, z2, x1, y2, z2,
+						box.uvDown, box.uvScaleU, box.uvScaleV);
+			} else {
+				quad(vc, pose,
+						x1, y2, z2, x2, y2, z2, x2, y2, z1, x1, y2, z1,
+						box.uvDown, box.uvScaleU, box.uvScaleV);
+			}
 		}
 		if (box.uvUp != null) {
 			// up 面：从上方看逆时针
-			quad(vc, pose,
-					x1, y1, z1, x2, y1, z1, x2, y1, z2, x1, y1, z2,
-					box.uvUp, box.uvScaleU, box.uvScaleV);
+			if (mirror) {
+				quad(vc, pose,
+						x1, y1, z2, x2, y1, z2, x2, y1, z1, x1, y1, z1,
+						box.uvUp, box.uvScaleU, box.uvScaleV);
+			} else {
+				quad(vc, pose,
+						x1, y1, z1, x2, y1, z1, x2, y1, z2, x1, y1, z2,
+						box.uvUp, box.uvScaleU, box.uvScaleV);
+			}
 		}
 		if (box.uvNorth != null) {
 			// north (Z-)：从 -Z 方向看逆时针
-			quad(vc, pose,
-					x1, y2, z1, x2, y2, z1, x2, y1, z1, x1, y1, z1,
-					box.uvNorth, box.uvScaleU, box.uvScaleV);
+			if (mirror) {
+				quad(vc, pose,
+						x1, y2, z2, x2, y2, z2, x2, y1, z2, x1, y1, z2,
+						box.uvNorth, box.uvScaleU, box.uvScaleV);
+			} else {
+				quad(vc, pose,
+						x1, y2, z1, x2, y2, z1, x2, y1, z1, x1, y1, z1,
+						box.uvNorth, box.uvScaleU, box.uvScaleV);
+			}
 		}
 		if (box.uvSouth != null) {
 			// south (Z+)：从 +Z 方向看逆时针
-			quad(vc, pose,
-					x1, y1, z2, x2, y1, z2, x2, y2, z2, x1, y2, z2,
-					box.uvSouth, box.uvScaleU, box.uvScaleV);
+			if (mirror) {
+				quad(vc, pose,
+						x1, y1, z1, x2, y1, z1, x2, y2, z1, x1, y2, z1,
+						box.uvSouth, box.uvScaleU, box.uvScaleV);
+			} else {
+				quad(vc, pose,
+						x1, y1, z2, x2, y1, z2, x2, y2, z2, x1, y2, z2,
+						box.uvSouth, box.uvScaleU, box.uvScaleV);
+			}
 		}
 		if (box.uvEast != null) {
 			// east (X+)：从 +X 方向看逆时针
-			quad(vc, pose,
-					x2, y1, z2, x2, y1, z1, x2, y2, z1, x2, y2, z2,
-					box.uvEast, box.uvScaleU, box.uvScaleV);
+			if (mirror) {
+				// 镜像后原 east 面落在 west 侧，绕向随旋转翻转
+				quad(vc, pose,
+						x1, y1, z1, x1, y1, z2, x1, y2, z2, x1, y2, z1,
+						box.uvEast, box.uvScaleU, box.uvScaleV);
+			} else {
+				quad(vc, pose,
+						x2, y1, z2, x2, y1, z1, x2, y2, z1, x2, y2, z2,
+						box.uvEast, box.uvScaleU, box.uvScaleV);
+			}
 		}
 		if (box.uvWest != null) {
 			// west (X-)：从 -X 方向看逆时针
-			quad(vc, pose,
-					x1, y1, z1, x1, y1, z2, x1, y2, z2, x1, y2, z1,
-					box.uvWest, box.uvScaleU, box.uvScaleV);
+			if (mirror) {
+				quad(vc, pose,
+						x2, y1, z2, x2, y1, z1, x2, y2, z1, x2, y2, z2,
+						box.uvWest, box.uvScaleU, box.uvScaleV);
+			} else {
+				quad(vc, pose,
+						x1, y1, z1, x1, y1, z2, x1, y2, z2, x1, y2, z1,
+						box.uvWest, box.uvScaleU, box.uvScaleV);
+			}
 		}
 	}
 
