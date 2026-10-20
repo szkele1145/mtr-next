@@ -3,42 +3,45 @@ const https = require('https');
 const crypto = require('crypto');
 
 const tok = fs.readFileSync('F:\\vibe coding工程\\sfx\\.ghtoken', 'utf-8').trim();
-const jarPath = 'F:\\vibe coding工程\\mtr-next\\build\\libs\\mtr-next-0.35.2-1.20.1-fabric.jar';
+const jarPath = 'F:\\vibe coding工程\\mtr-next\\build\\libs\\mtr-next-0.35.3-1.20.1-fabric.jar';
 const fileBuf = fs.readFileSync(jarPath);
-const fileName = 'mtr-next-0.35.2-1.20.1-fabric.jar';
-const tag = 'v0.35.2';
+const fileName = 'mtr-next-0.35.3-1.20.1-fabric.jar';
+const tag = 'v0.35.3';
 
 const notes = [
-  '## MTR Next 0.35.2 - 门重叠离线检测 + flipTextureV 定论',
+  '## MTR Next 0.35.3 - 镜像展开（positionsFlipped）+ ERIDU 左半侧齐活',
   '',
-  '### 新增',
+  '### 核心修复：左半侧车门/车窗此前完全缺失',
   '',
-  '- `BbModelLoader.detectDoorOverlaps(boxes)`：上游 `DynamicVehicleModel.testDoors` 的纯数据面移植——模拟门从 t=0 到 t=1 走 5 个时间片，若两扇门"初始不相交、中途相交"，判定门 X/Z 倍率配错（车包作者配置错误，上游打 WARN）。移植为可离线回归的静态方法。',
+  '上游 `ModelPropertiesPart.iteratePositions`（L654-656）把位定义的 `positions` 与 `positionsFlipped` **都渲染**：前者 flipped=false，后者 X 取反 + flipped=true，且渲染时绕 Y 轴转 180°（`ModelPropertiesPart.java:364`）。`addBox`（L649-650）同步镜像 X/Z。',
   '',
-  '**本次实测得出的两条算法事实**（已写进测试用例）：',
+  '实测 ERIDU 车包（eridudanguei.bbmodel，970 元素）：`men2`/`men3`/`win`/`door` 等顶层组 **几何只建了 +X 半边**（men2 x∈[19,20]px，win 右 24 盒 / 左 0 盒），另一侧完全靠 flipped 副本补齐。',
   '',
-  '1. **同向同量滑动的两扇门永远不会相撞**——相对距离恒定。故能触发告警的错误配置是**倍率不等**（快门追上慢门），而不是"同向"。',
-  '2. ERIDU 的 +11/−11 反向对滑配置，两门**初始包围盒本就相交**（实测 men2 z 跨 [-56.8, 63.5]、men3 z 跨 [-59.5, 40.0] 像素）→ 上游"初始相交则跳过"分支会直接放过，不误报。',
+  '**⇒ 0.35.2 及以前：左半侧车门、车窗、门灯、门地板全部不渲染。**',
   '',
-  '> 由此可知上游 `testDoors` 的实际覆盖能力有限：只能发现"倍率明显配错"的极端情形，对 ERIDU 这类正确配置无诊断价值。移植保留其语义，不夸大其作用。',
+  '### 实现',
   '',
-  '### 定论（开放问题关闭）',
+  '- 新增 `PositionDefinitions4xLoader`：解析 `definition_*.json` → 位定义名 → `PositionGroup{positions, positionsFlipped}`。',
+  '- `Properties4xLoader.PartInfo` 增加 `positionDefinitionNames`。',
+  '- `VehicleResource.ModelLayer` 增加 `positionDefinitionsResource` 字段并解析位定义名列表。',
+  '- `BbModelLoader`：`BbBox` 增加 `topGroup`/`singleSidedGroup`/`mirrorNeeded`/`doorFlipped`；`buildBoxes` 统计各顶层组 X 侧分布；`annotate` 双条件判定镜像（几何单侧 AND 引用含翻转位的位定义）；`loadAnnotated` 增加第三缓存键。',
+  '- `BbModelTrainRenderer`：`drawBoxFaces` 增加 mirror 参数（(x,z)→(−x,−z)，每面 winding 反转）；新增 `drawMirrorPair`（本体 flipped=false、镜像 flipped=true，上游 `copySign(abs,(flipped?-1:1)*mult)` 自动反号）。',
+  '- `FormationPreviewRenderer` 同步镜像逻辑。',
   '',
-  '- **`flipTextureV` 语义已定论——不实装是正确的**。上游 `VehicleModel.createModel` 只把该字段传给 `.obj`/`.mqo`/`.mqoz` 路径（`ModelResourceLoader.loadModel`）；bbmodel 路径的 `DynamicVehicleModel` 构造器完全不接收它。即上游对 bbmodel 同样不消费此字段（Blockbench 导出的 UV 原点本就与 MC 一致）。mtr-next 不实装 = 与上游行为一致，不是遗漏。',
+  '### 为什么对称组不镜像',
   '',
-  '### 测试',
+  '上游对 `end`/`hand` 等本就左右对称的组也会画 flipped 副本（与对面正本重叠）。mtr-next 用 `singleSidedGroup` 跳过这些组，避免 Z-fighting 与重复面。实测 ERIDU：17/36 个顶层组需镜像。',
   '',
-  '- ParserSelfTest 155 → 163 全绿（新增门重叠检测 8 项）。',
+  '### 验证',
   '',
-  '### 0.35.1 回顾（上一版）',
+  '- ParserSelfTest 163 → **216 全绿**（新增 33 条：位定义解析、镜像判定、对称组跳过、门位移反号、真实 ERIDU 车包端到端）。',
+  '- 真实 ERIDU 车包端到端：8 个门/窗组全部判为需镜像；`end`/`end_n`/`hand`/`hand_n` 判为双侧组不镜像；`men2` dz=+11 / `men3` dz=−11 与实测一致。',
+  '- 构建 0 警告。',
   '',
-  '- 4 个 mixin 目标类由 `targets = "字符串"` 改为 `value = 类字面量`——Mixin AP 对 targets 字符串目标不解析目标类，注入点写错也编译通过、运行时静默不命中；改为类字面量后 AP 真正校验注入点，把静默失效提前为编译错误。',
+  '### 0.35.2 回顾',
   '',
-  '### 0.35.0 回顾',
-  '',
-  '- bbmodel 坐标 /16 尺度换算（上游 `BlockbenchElement`："16 Blockbench units = 1 Minecraft block"）——此前车体比实际大 16 倍。',
-  '- UV 归一化除数改用 bbmodel 自身 `resolution`（实测 ERIDU 为 512/128/24/64）——此前硬编码 /24 让车体贴图 UV 严重越界错位。',
-  '- 门动画接入渲染（上游 `DoorAnimationType` 12 值移植 + X/Z 双轴位移）。',
+  '- `BbModelLoader.detectDoorOverlaps`：上游 `testDoors` 移植（模拟 5 个时间片检查两扇门是否中途相撞）。',
+  '- `flipTextureV` 定论：不实装是正确的（上游对 bbmodel 不消费此字段）。',
   '',
   '> 渲染效果需图形客户端肉眼验证（见 `docs/client-verification-boundary.md` 记录的验证边界）。',
   '',
@@ -82,7 +85,7 @@ function api(method, path, bodyObj) {
     console.log('TAG_MISSING -> creating');
     const r = await api('POST', '/repos/szkele1145/mtr-next/git/refs', {
       ref: 'refs/tags/' + tag,
-      sha: '4c79f5dc622000447cdefed8af5a500b5a95d144'
+      sha: '4a64ccfb7c18bd3442a28a800c33c0db2a05981b'
     });
     console.log('TAG_CREATED ' + r.ref);
   }
@@ -95,7 +98,7 @@ function api(method, path, bodyObj) {
   } catch (e) {
     rel = await api('POST', '/repos/szkele1145/mtr-next/releases', {
       tag_name: tag,
-      name: 'MTR Next 0.35.2 - 门重叠离线检测 + flipTextureV 定论',
+      name: 'MTR Next 0.35.3 - 镜像展开（positionsFlipped）+ ERIDU 左半侧齐活',
       body: notes,
       draft: false,
       prerelease: false
