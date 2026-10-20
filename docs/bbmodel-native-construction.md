@@ -188,7 +188,8 @@ positionsFlipped.forEach(p -> cb.accept(-p.getX(), p.getY(), p.getZ(), true));
 | `client/render/BbModelTreeCache.java` | 资源加载 + 缓存（键 = modelResource + "\|" + propertiesResource） |
 | `client/render/BbModelTrainRenderer.java` | 按部件记录 × 位置实例渲染，门位移对齐 §5 |
 | `client/render/FormationPreviewRenderer.java` | 编组屏预览，**共用同一棵树**（保证预览与实车一致） |
-| `client/render/BbModelLoader.java` | 旧手算路径，**仅保留给离线自测**用（`parseForTest`/`annotateForTest`/`detectDoorOverlaps`） |
+| `client/render/DoorOverlapDetector.java` | 复刻上游 `DynamicVehicleModel.testDoors`（门重叠检测），用 BB 坐标系的门盒 |
+| ~~`client/render/BbModelLoader.java`~~ | 旧手算路径，**[0.36.5] 已删除**（自测改用 `BbModelTree.parseForTest` + `DoorOverlapDetector`） |
 
 `BbModelTree` 的节点结构：
 

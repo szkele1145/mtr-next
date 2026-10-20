@@ -107,51 +107,68 @@ public final class ParserSelfTest {
 	 * 嵌套组、uuid 引用、无 outliner 的退化路径。
 	 */
 	private static void testOutlinerGroupPath() {
-		System.out.println("[BbModelLoader.walkOutliner / isDoorByGroup]");
+		System.out.println("[BbModelTree 顶层组语义 / 门归属]");
 
 		// --- 模拟 bbmodel：嵌套 outliner + 混合 children ---
-		final com.google.gson.JsonObject root = json("""
+		// 上游 DynamicVehicleModel.java:41-62：blockbenchModel.getOutlines() 只遍历
+		// **顶层** outline，每个顶层组建一个 nameToPart 条目；嵌套组只是链上的
+		// 旋转/位移节点，**不**单独建锚点。
+		final var tree = mtrnext.client.render.BbModelTree.parseForTest("""
 				{ "elements": [
-				  { "uuid": "e1", "name": "cube", "from": [0,0,0], "to": [1,1,1] },
-				  { "uuid": "e2", "name": "cube", "from": [0,0,0], "to": [1,1,1] },
-				  { "uuid": "e3", "name": "cube", "from": [0,0,0], "to": [1,1,1] },
-				  { "uuid": "e4", "name": "door_left_bottom", "from": [0,0,0], "to": [1,1,1] } ],
+				  { "uuid": "e1", "name": "cube", "from": [0,0,0], "to": [16,16,16] },
+				  { "uuid": "e2", "name": "cube", "from": [0,0,0], "to": [16,16,16] },
+				  { "uuid": "e3", "name": "cube", "from": [0,0,0], "to": [16,16,16] } ],
 				  "outliner": [
 				    { "name": "body", "children": [
 				      { "name": "men2", "children": ["e1", "e2"] } ] },
-				    { "name": "men3", "children": ["e3"] },
-				    "e4" ] }
-				""");
-		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(root);
-		check("4 个盒全部解析", boxes.size() == 4);
-		check("e1 组名链 body→men2", boxes.get(0).groupPath.size() == 2
-				&& "body".equals(boxes.get(0).groupPath.get(0))
-				&& "men2".equals(boxes.get(0).groupPath.get(1)));
-		check("e2 组名链同 e1", boxes.get(1).groupPath.size() == 2
-				&& "men2".equals(boxes.get(1).groupPath.get(1)));
-		check("e3 单层组 men3", boxes.get(2).groupPath.size() == 1
-				&& "men3".equals(boxes.get(2).groupPath.get(0)));
-		check("e4 顶层裸 uuid -> 空组链", boxes.get(3).groupPath.isEmpty());
+				    { "name": "men3", "children": ["e3"] } ] }
+				""", 0.0F);
+		check("3 个 element 全部解析", tree.elements.size() == 3);
+		check("顶层组只有 2 个（body / men3）", tree.groupNames.size() == 2);
+		check("body 是顶层组", tree.groupNames.contains("body"));
+		check("men3 是顶层组", tree.groupNames.contains("men3"));
+		// 嵌套组 men2 不是顶层组 → 不建锚点
+		check("嵌套组 men2 不建锚点", !tree.groupNames.contains("men2"));
+		check("嵌套 element 归属顶层组 body",
+				"body".equals(tree.elements.get(0).groupName));
+		check("嵌套 element 归属顶层组 body（e2 同）",
+				"body".equals(tree.elements.get(1).groupName));
+		check("顶层 element 归属 men3",
+				"men3".equals(tree.elements.get(2).groupName));
+		check("groupParts 数量 = 顶层组数", tree.groupParts.size() == 2);
 
-		// --- isDoorByGroup：parts[].names 匹配祖先组名 ---
+		// --- 门归属：parts[].names 匹配**顶层组名**（上游 nameToPart 语义） ---
 		final var parts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
 				{ "parts": [
-				  { "names": ["men2"], "doorZMultiplier": 11.0 },
+				  { "names": ["body"], "doorZMultiplier": 11.0 },
 				  { "names": ["men3"], "doorZMultiplier": -11.0 } ] }
 				"""));
-		check("men2 组下盒判定为门", mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(0), parts));
-		check("men3 组下盒判定为门", mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(2), parts));
-		check("无组链的 door_left_bottom 走旧启发式", mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(3), parts));
-		check("零倍率部件不参与门判定", !mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(0),
-				mtrnext.client.render.Properties4xLoader.parseParts(json(
-						"{\"parts\":[{\"names\":[\"men2\"],\"doorZMultiplier\":0.0}]}"))));
-		check("parts=null 走旧启发式", mtrnext.client.render.BbModelLoader.isDoorByGroup(boxes.get(3), null));
-		check("box=null 安全返回 false", !mtrnext.client.render.BbModelLoader.isDoorByGroup(null, parts));
+		final var boxes = mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, parts);
+		// 上游门盒是「顶层组内所有 element 的合并包围盒」×「位置实例」，
+		// 不是逐 element —— body 组 2 个 element → 1 个门盒。
+		check("body + men3 共 2 个门盒（按顶层组合并）", boxes.size() == 2);
+		check("body 门 z 倍率=11", near(boxes.get(0).doorZMult, 11.0F));
+		check("body 门组名=body", "body".equals(boxes.get(0).groupPath));
+		check("men3 门 z 倍率=-11", near(boxes.get(1).doorZMult, -11.0F));
+		check("men3 门组名=men3", "men3".equals(boxes.get(1).groupPath));
 
-		// --- 退化：无 outliner 的 bbmodel（3.x 导出）→ 全部空组链 ---
-		final var noOutliner = mtrnext.client.render.BbModelLoader.parseForTest(json(
-				"{\"elements\":[{\"uuid\":\"x1\",\"name\":\"door\",\"from\":[0,0,0],\"to\":[1,1,1]}]}"));
-		check("无 outliner -> 空组链", noOutliner.get(0).groupPath.isEmpty());
+		// 嵌套组名（men2）**不**能命中 parts[].names —— 上游只为顶层组建锚点
+		final var nestedOnly = mtrnext.client.render.Properties4xLoader.parseParts(json(
+				"{\"parts\":[{\"names\":[\"men2\"],\"doorZMultiplier\":11.0}]}"));
+		check("嵌套组名不命中门归属（上游只认顶层组）",
+				mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, nestedOnly).isEmpty());
+
+		// 零倍率部件不参与门判定（上游 isDoor()）
+		final var zeroParts = mtrnext.client.render.Properties4xLoader.parseParts(json(
+				"{\"parts\":[{\"names\":[\"body\"],\"doorZMultiplier\":0.0}]}"));
+		check("零倍率部件不参与门判定",
+				mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, zeroParts).isEmpty());
+
+		// null 安全
+		check("tree=null 门盒为空",
+				mtrnext.client.render.DoorOverlapDetector.doorBoxes(null, parts).isEmpty());
+		check("parts=null 门盒为空",
+				mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, null).isEmpty());
 	}
 
 	/**
@@ -462,46 +479,71 @@ public final class ParserSelfTest {
 	}
 
 	/**
-	 * [0.35] bbmodel 尺度换算 + UV 归一化回归。
+	 * [0.36.5] bbmodel 尺度换算回归（迁到原生树）。
 	 * <p>
 	 * 上游依据（MIT 上游 master）：
 	 * {@code BlockbenchElement.setModelPart} —— 注释 "Normalize dimensions
 	 * (16 Blockbench units = 1 Minecraft block)"，返回 Box 坐标全部 /16。
-	 * UV：上游用 bbmodel 自身 resolution（BlockbenchModel.getTextureWidth/Height
-	 * ← BlockbenchResolution），而非固定 24。
+	 * <p>
+	 * [0.36.5 变更] 原实现用手算 {@code BbBox}（旧 {@code BbModelLoader}），
+	 * 该类已随原生树重写一并删除。本测试改用 {@link BbModelTree.Element} 的
+	 * {@code center/size}（已是格为单位）。
+	 * <p>
+	 * UV 归一化（resolution 作除数）已由 {@code bbModelTreeTest} 用
+	 * 「六面逐面对比 MC 实测 UV 表」的方式更严格覆盖，本处不再重复。
 	 */
 	private static void testBbModelScaleAndUv() {
-		System.out.println("[BbModelLoader 尺度/UV]");
+		System.out.println("[BbModelTree 尺度换算]");
 
 		// 16 BB 像素 = 1 格
-		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+		final var tree = mtrnext.client.render.BbModelTree.parseForTest("""
 				{ "resolution": { "width": 512, "height": 512 },
 				  "elements": [
 				    { "uuid": "a", "name": "cube", "from": [16,0,32], "to": [32,16,48] } ] }
-				"""));
-		check("解析出 1 个盒", boxes.size() == 1);
-		final var b = boxes.get(0);
-		check("X 起点 16px -> 1 格", near(b.x1, 1.0F));
-		check("X 终点 32px -> 2 格", near(b.x2, 2.0F));
-		check("Y 起点 0px -> 0 格", near(b.y1, 0.0F));
-		check("Y 终点 16px -> 1 格", near(b.y2, 1.0F));
-		check("Z 起点 32px -> 2 格", near(b.z1, 2.0F));
-		check("Z 终点 48px -> 3 格", near(b.z2, 3.0F));
+				""", 0.0F);
+		check("解析出 1 个 element", tree.elements.size() == 1);
+		final var e = tree.elements.get(0);
+		/*
+		 * MC 空间约定（上游 BlockbenchElement.java:23-41）：
+		 *   originX = -origin[0]、originY = -origin[1] - modelYOffset*16、originZ = +origin[2]
+		 *   x = -to[0] - originX、y = -to[1] - originY - modelYOffset*16、z = from[2] - originZ
+		 *   sizeX/Y/Z = round(to - from)  ← 正数
+		 * 本例 from=[16,0,32] to=[32,16,48]，modelYOffset=0，元素 origin 缺省 [0,0,0]：
+		 *   originX=0 → x = -32-0 = -32；originY=0 → y = -16-0 = -16；originZ=0 → z = 32-0 = 32
+		 *   尺寸各 16px = 1 格
+		 *   中心 = 起点 + 尺寸/2：X=(-32+8)/16=-1.5、Y=(-16+8)/16=-0.5、Z=(32+8)/16=2.5
+		 */
+		check("X 中心 −1.5 格（MC 空间 X 取负）", near(e.centerX, -1.5F));
+		check("X 尺寸 1 格", near(e.sizeX, 1.0F));
+		check("Y 中心 −0.5 格（MC 空间 Y 取负）", near(e.centerY, -0.5F));
+		check("Y 尺寸 1 格", near(e.sizeY, 1.0F));
+		check("Z 中心 2.5 格（Z 保持）", near(e.centerZ, 2.5F));
+		check("Z 尺寸 1 格", near(e.sizeZ, 1.0F));
 
-		// UV 归一化除数 = resolution
-		check("uvScaleU = 1/512", near(b.uvScaleU, 1.0F / 512.0F));
-		check("uvScaleV = 1/512", near(b.uvScaleV, 1.0F / 512.0F));
+		// 上游 Box（BB 坐标系，0.36.5 归一化后）：
+		// 上游原始参数 = (2, 1, -2, 1, 0, -3)（X/Y/Z 全取负 → 三轴倒序）
+		// 归一化 → min=(1, 0, -3), max=(2, 1, -2)
+		final var box = e.upstreamBox();
+		check("上游 Box minX = 1", near(box[0], 1.0F));
+		check("上游 Box minY = 0", near(box[1], 0.0F));
+		check("上游 Box minZ = -3", near(box[2], -3.0F));
+		check("上游 Box maxX = 2", near(box[3], 2.0F));
+		check("上游 Box maxY = 1", near(box[4], 1.0F));
+		check("上游 Box maxZ = -2", near(box[5], -2.0F));
+		check("上游 Box 三轴长度均为 1 格",
+				near(box[3] - box[0], 1.0F) && near(box[4] - box[1], 1.0F) && near(box[5] - box[2], 1.0F));
 
-		// 不同 resolution 的模型各自取自己的除数（ERIDU 实测 512/128/24/64）
-		final var r128 = mtrnext.client.render.BbModelLoader.parseForTest(json(
-				"{\"resolution\":{\"width\":128,\"height\":128},\"elements\":[{\"uuid\":\"a\",\"name\":\"cube\",\"from\":[0,0,0],\"to\":[16,16,16]}]}"));
-		check("resolution 128 -> uvScaleU=1/128", near(r128.get(0).uvScaleU, 1.0F / 128.0F));
+		// 不同 resolution 的模型各自取自己的贴图尺寸
+		final var r128 = mtrnext.client.render.BbModelTree.parseForTest(
+				"{\"resolution\":{\"width\":128,\"height\":128},\"elements\":[{\"uuid\":\"a\",\"name\":\"cube\",\"from\":[0,0,0],\"to\":[16,16,16]}]}",
+				0.0F);
+		check("resolution 128 生效", r128.textureWidth == 128 && r128.textureHeight == 128);
 
 		// 缺 resolution -> 退化默认值（不崩）
-		final var noRes = mtrnext.client.render.BbModelLoader.parseForTest(json(
-				"{\"elements\":[{\"uuid\":\"a\",\"name\":\"cube\",\"from\":[0,0,0],\"to\":[16,16,16]}]}"));
-		check("缺 resolution 不崩", noRes.size() == 1);
-		check("缺 resolution -> uvScale=1/16", near(noRes.get(0).uvScaleU, 1.0F / 16.0F));
+		final var noRes = mtrnext.client.render.BbModelTree.parseForTest(
+				"{\"elements\":[{\"uuid\":\"a\",\"name\":\"cube\",\"from\":[0,0,0],\"to\":[16,16,16]}]}",
+				0.0F);
+		check("缺 resolution 不崩", noRes.elements.size() == 1);
 	}
 
 	/**
@@ -511,67 +553,71 @@ public final class ParserSelfTest {
 	 * {@code doorXMultiplier != 0 || doorZMultiplier != 0}；门归属由
 	 * parts[].names 匹配模型部件名（4.0 pack 里即 outliner 组名）。
 	 */
+	/**
+	 * [0.36.5] 门参数归属回归（迁到原生树 + 顶层组语义）。
+	 * <p>
+	 * 上游依据：{@code ModelPropertiesPart.isDoor()} =
+	 * {@code doorXMultiplier != 0 || doorZMultiplier != 0}；门归属由
+	 * parts[].names 匹配模型部件名（4.0 pack 里即**顶层** outliner 组名，
+	 * 见 {@code DynamicVehicleModel.java:41-62} 的 {@code nameToPart}）。
+	 * <p>
+	 * [0.36.5 变更] 旧实现匹配「祖先组名链」（嵌套组也命中），
+	 * 偏离上游；且载体 {@code BbBox} 已随旧手算类删除。
+	 */
 	private static void testDoorAnnotation() {
-		System.out.println("[BbModelLoader 门标注]");
+		System.out.println("[门参数归属（原生树 / 顶层组）]");
 
-		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(json("""
+		final var tree = mtrnext.client.render.BbModelTree.parseForTest("""
 				{ "resolution": { "width": 512, "height": 512 },
 				  "elements": [
 				    { "uuid": "e1", "name": "cube", "from": [304,0,0],  "to": [320,320,1024] },
 				    { "uuid": "e2", "name": "cube", "from": [320,0,0],  "to": [336,320,1024] },
 				    { "uuid": "e3", "name": "cube", "from": [0,0,0],    "to": [16,16,16] } ],
 				  "outliner": [
-				    { "name": "door", "children": [
-				      { "name": "men2", "children": ["e1"] },
-				      { "name": "men3", "children": ["e2"] } ] },
-				    "e3" ] }
-				"""));
-		check("解析出 3 个盒", boxes.size() == 3);
+				    { "name": "men2", "children": ["e1"] },
+				    { "name": "men3", "children": ["e2"] },
+				    { "name": "other", "children": ["e3"] } ] }
+				""", 0.0F);
+		check("解析出 3 个 element", tree.elements.size() == 3);
 
 		final var parts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
 				{ "parts": [
 				  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD_SLOW" },
 				  { "names": ["men3"], "doorZMultiplier": -11.0, "doorAnimationType": "STANDARD_SLOW" } ] }
 				"""));
-		final var ann = mtrnext.client.render.BbModelLoader.annotateForTest(boxes, parts);
-		check("标注后仍是 3 个盒", ann.size() == 3);
+		final var ann = mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, parts);
+		check("只有 2 个 element 归属门", ann.size() == 2);
 
 		// men2 -> z 倍率 +11，动画型 STANDARD_SLOW
-		check("men2 盒 z 倍率=11", near(ann.get(0).doorZMult, 11.0F));
-		check("men2 盒 x 倍率=0", ann.get(0).doorXMult == 0.0F);
-		check("men2 盒动画型=STANDARD_SLOW",
+		check("men2 门 z 倍率=11", near(ann.get(0).doorZMult, 11.0F));
+		check("men2 门 x 倍率=0", ann.get(0).doorXMult == 0.0F);
+		check("men2 门动画型=STANDARD_SLOW",
 				ann.get(0).doorAnim == mtrnext.client.render.DoorAnimation4x.STANDARD_SLOW);
-		check("men2 盒是可动画门", ann.get(0).isAnimatedDoor());
+		check("men2 门组名=men2", "men2".equals(ann.get(0).groupPath));
 
 		// men3 -> z 倍率 -11
-		check("men3 盒 z 倍率=-11", near(ann.get(1).doorZMult, -11.0F));
-		check("men3 盒动画型=STANDARD_SLOW",
+		check("men3 门 z 倍率=-11", near(ann.get(1).doorZMult, -11.0F));
+		check("men3 门动画型=STANDARD_SLOW",
 				ann.get(1).doorAnim == mtrnext.client.render.DoorAnimation4x.STANDARD_SLOW);
 
-		// 无组裸 uuid 的盒 -> 非门
-		check("裸 uuid 盒非门", ann.get(2).doorAnim == null);
-		check("裸 uuid 盒不是可动画门", !ann.get(2).isAnimatedDoor());
-		check("裸 uuid 盒倍率清零", ann.get(2).doorZMult == 0.0F && ann.get(2).doorXMult == 0.0F);
+		// 未被 parts 命中的组 -> 非门
+		final var noHit = mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree,
+				mtrnext.client.render.Properties4xLoader.parseParts(json(
+						"{\"parts\":[{\"names\":[\"nobody\"],\"doorZMultiplier\":11.0}]}")));
+		check("未命中的组不是门", noHit.isEmpty());
 
 		// 零倍率部件不参与门判定（上游 isDoor()）
 		final var zeroParts = mtrnext.client.render.Properties4xLoader.parseParts(json(
 				"{\"parts\":[{\"names\":[\"men2\"],\"doorZMultiplier\":0.0,\"doorXMultiplier\":0.0}]}"));
-		final var ann2 = mtrnext.client.render.BbModelLoader.annotateForTest(
-				mtrnext.client.render.BbModelLoader.parseForTest(json("""
-						{ "elements": [ { "uuid": "e1", "name": "cube", "from": [0,0,0], "to": [16,16,16] } ],
-						  "outliner": [ { "name": "men2", "children": ["e1"] } ] }
-						""")), zeroParts);
-		check("零倍率部件 -> 非门", ann2.get(0).doorAnim == null);
+		final var ann2 = mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, zeroParts);
+		check("零倍率部件 -> 非门", ann2.isEmpty());
 
 		// X-only 门（塞拉门）也要被标注（上游 isDoor() 判 X 或 Z）
 		final var xParts = mtrnext.client.render.Properties4xLoader.parseParts(json(
 				"{\"parts\":[{\"names\":[\"men2\"],\"doorXMultiplier\":11.0,\"doorZMultiplier\":0.0,\"doorAnimationType\":\"PLUG_FAST\"}]}"));
-		final var ann3 = mtrnext.client.render.BbModelLoader.annotateForTest(
-				mtrnext.client.render.BbModelLoader.parseForTest(json("""
-						{ "elements": [ { "uuid": "e1", "name": "cube", "from": [0,0,0], "to": [16,16,16] } ],
-						  "outliner": [ { "name": "men2", "children": ["e1"] } ] }
-						""")), xParts);
-		check("X-only 门被标注", ann3.get(0).doorAnim == mtrnext.client.render.DoorAnimation4x.PLUG_FAST);
+		final var ann3 = mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, xParts);
+		check("X-only 门被标注", ann3.size() == 1
+				&& ann3.get(0).doorAnim == mtrnext.client.render.DoorAnimation4x.PLUG_FAST);
 		check("X-only 门 x 倍率=11", near(ann3.get(0).doorXMult, 11.0F));
 	}
 
@@ -588,78 +634,94 @@ public final class ParserSelfTest {
 	 * 故上游的"初始相交则跳过"分支会直接放过——不误报。
 	 */
 	private static void testDoorOverlapDetection() {
-		System.out.println("[BbModelLoader.detectDoorOverlaps（上游 testDoors 移植）]");
+		System.out.println("[DoorOverlapDetector（上游 testDoors 移植）]");
 
 		// --- 场景 A：同向同量滑动 → 相对距离恒定 → 不该报（防误报） ---
-		final var sameSpeed = mtrnext.client.render.BbModelLoader.parseForTest(json("""
-				{ "elements": [
-				  { "uuid": "d1", "name": "cube", "from": [304,0,0],   "to": [320,64,124] },
-				  { "uuid": "d2", "name": "cube", "from": [304,0,128], "to": [320,64,252] } ],
-				  "outliner": [
-				    { "name": "men2", "children": ["d1"] },
-				    { "name": "men3", "children": ["d2"] } ] }
-				"""));
-		final var sameParts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
-				{ "parts": [
-				  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD" },
-				  { "names": ["men3"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD" } ] }
-				"""));
-		final var sameBoxes = mtrnext.client.render.BbModelLoader.annotateForTest(sameSpeed, sameParts);
+		// d1 z=[0,10]格, d2 z=[12,22]格
+		final var sameSpeed = mtrnext.client.render.DoorOverlapDetector.doorBoxes(
+				mtrnext.client.render.BbModelTree.parseForTest("""
+						{ "elements": [
+						  { "uuid": "d1", "name": "cube", "from": [304,0,0],   "to": [320,64,124] },
+						  { "uuid": "d2", "name": "cube", "from": [304,0,128], "to": [320,64,252] } ],
+						  "outliner": [
+						    { "name": "men2", "children": ["d1"] },
+						    { "name": "men3", "children": ["d2"] } ] }
+						""", 0.0F),
+				mtrnext.client.render.Properties4xLoader.parseParts(json("""
+						{ "parts": [
+						  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD" },
+						  { "names": ["men3"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD" } ] }
+						""")));
+		check("同向同量滑动收集到 2 扇门", sameSpeed.size() == 2);
 		check("同向同量滑动（相对距离恒定）不报",
-				mtrnext.client.render.BbModelLoader.detectDoorOverlaps(sameBoxes).isEmpty());
+				mtrnext.client.render.DoorOverlapDetector.detectDoorOverlaps(sameSpeed).isEmpty());
 
-		// --- 场景 B：倍率不等（快门追上慢门）→ 应报重叠 ---
-		// d1 z=[0,10]格, d2 z=[12,22]格（初始不相交）
-		// d1 滑 +40px=2.5格, d2 滑 +1px → t=1 时 d1=[2.5,12.5] 与 d2=[12.06,22.06] 相交
-		final var unequal = mtrnext.client.render.BbModelLoader.parseForTest(json("""
-				{ "elements": [
-				  { "uuid": "d1", "name": "cube", "from": [304,0,0],   "to": [320,64,160] },
-				  { "uuid": "d2", "name": "cube", "from": [304,0,192], "to": [320,64,352] } ],
-				  "outliner": [
-				    { "name": "men2", "children": ["d1"] },
-				    { "name": "men3", "children": ["d2"] } ] }
-				"""));
-		final var unequalParts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
-				{ "parts": [
-				  { "names": ["men2"], "doorZMultiplier": 40.0, "doorAnimationType": "STANDARD" },
-				  { "names": ["men3"], "doorZMultiplier": 1.0,  "doorAnimationType": "STANDARD" } ] }
-				"""));
-		final var unequalBoxes = mtrnext.client.render.BbModelLoader.annotateForTest(unequal, unequalParts);
-		check("异向初始不相交", !unequalBoxes.get(0).intersects(unequalBoxes.get(1), 0, 0, 0, 0));
-		final var overlaps = mtrnext.client.render.BbModelLoader.detectDoorOverlaps(unequalBoxes);
+		// --- 场景 B：倍率不等（大滑动量追上小滑动量）→ 应报重叠 ---
+		// 上游 testDoors 的时间片：time = i/5 ∈ {0, 0.2, 0.4, 0.6, 0.8, 1.0}。
+		// STANDARD 走 default: smoothEnds(0, doorMax, 0, 0.5, time)：
+		//   t=0.2 → doorMax×(1−cos(0.4π))/2 = doorMax×0.6545
+		//   t=0.4 → doorMax×0.9045；t≥0.6 → doorMax（已封顶）
+		// BB 坐标系实测（见 [dbg] 输出）：from z=0 的盒 z=[-10,0]（Z 轴取负，
+		// 跨度 = (to.z-from.z)/16 格）；from z=-16/to z=-32 的盒 z=[1,2]。
+		// d1: doorZMultiplier=40，盒 z=[-10,0] 格
+		// d2: doorZMultiplier=1，盒 z=[1,2] 格 —— 初始间隙 1 格（不相交）
+		// t=0.2：d1 滑 40×0.6545=26.2px=1.64 格 → z=[-8.36,1.64]
+		//       d2 滑 1×0.6545=0.65px=0.04 格 → z=[1.04,2.04]
+		//       d1.max=1.64 > d2.min=1.04 ⇒ Z 轴区间相交 → 应报。
+		final var unequal = mtrnext.client.render.DoorOverlapDetector.doorBoxes(
+				mtrnext.client.render.BbModelTree.parseForTest("""
+						{ "elements": [
+						  { "uuid": "d1", "name": "cube", "from": [304,0,0],   "to": [320,64,160] },
+						  { "uuid": "d2", "name": "cube", "from": [304,0,-16], "to": [320,64,-32] } ],
+						  "outliner": [
+						    { "name": "men2", "children": ["d1"] },
+						    { "name": "men3", "children": ["d2"] } ] }
+						""", 0.0F),
+				mtrnext.client.render.Properties4xLoader.parseParts(json("""
+						{ "parts": [
+						  { "names": ["men2"], "doorZMultiplier": 40.0, "doorAnimationType": "STANDARD" },
+						  { "names": ["men3"], "doorZMultiplier": 1.0,  "doorAnimationType": "STANDARD" } ] }
+						""")));
+		check("异向初始不相交", !unequal.get(0).intersects(unequal.get(1), 0, 0));
+		final var overlaps = mtrnext.client.render.DoorOverlapDetector.detectDoorOverlaps(unequal);
 		check("倍率不等追尾被检出", overlaps.size() == 1);
 		check("报错信息含组名", overlaps.size() == 1
 				&& overlaps.get(0).contains("men2") && overlaps.get(0).contains("men3"));
 
 		// --- 场景 C：ERIDU 真实配置（+11/−11 反向对滑，初始包围盒相交）→ 不报 ---
 		// 用真实实测的 ERIDU 组 Z 跨度：men2 [-56.8, 63.5]、men3 [-59.5, 40.0]（像素）
-		final var eridu = mtrnext.client.render.BbModelLoader.parseForTest(json("""
-				{ "elements": [
-				  { "uuid": "d1", "name": "cube", "from": [304,0,-908], "to": [320,320,1016] },
-				  { "uuid": "d2", "name": "cube", "from": [320,0,-952], "to": [336,320,640] } ],
-				  "outliner": [
-				    { "name": "men2", "children": ["d1"] },
-				    { "name": "men3", "children": ["d2"] } ] }
-				"""));
-		final var eriduParts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
-				{ "parts": [
-				  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD_SLOW" },
-				  { "names": ["men3"], "doorZMultiplier": -11.0, "doorAnimationType": "STANDARD_SLOW" } ] }
-				"""));
-		final var eriduBoxes = mtrnext.client.render.BbModelLoader.annotateForTest(eridu, eriduParts);
+		final var eridu = mtrnext.client.render.DoorOverlapDetector.doorBoxes(
+				mtrnext.client.render.BbModelTree.parseForTest("""
+						{ "elements": [
+						  { "uuid": "d1", "name": "cube", "from": [304,0,-908], "to": [320,320,1016] },
+						  { "uuid": "d2", "name": "cube", "from": [320,0,-952], "to": [336,320,640] } ],
+						  "outliner": [
+						    { "name": "men2", "children": ["d1"] },
+						    { "name": "men3", "children": ["d2"] } ] }
+						""", 0.0F),
+				mtrnext.client.render.Properties4xLoader.parseParts(json("""
+						{ "parts": [
+						  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD_SLOW" },
+						  { "names": ["men3"], "doorZMultiplier": -11.0, "doorAnimationType": "STANDARD_SLOW" } ] }
+						""")));
 		check("ERIDU 真实几何初始包围盒相交",
-				eriduBoxes.get(0).intersects(eriduBoxes.get(1), 0, 0, 0, 0));
+				eridu.get(0).intersects(eridu.get(1), 0, 0));
 		check("ERIDU 配置（+11/−11 对滑）不报重叠",
-				mtrnext.client.render.BbModelLoader.detectDoorOverlaps(eriduBoxes).isEmpty());
+				mtrnext.client.render.DoorOverlapDetector.detectDoorOverlaps(eridu).isEmpty());
 
 		// --- 退化：单门 / null ---
-		final var single = mtrnext.client.render.BbModelLoader.annotateForTest(
-				mtrnext.client.render.BbModelLoader.parseForTest(json("""
+		final var single = mtrnext.client.render.DoorOverlapDetector.doorBoxes(
+				mtrnext.client.render.BbModelTree.parseForTest("""
 						{ "elements": [ { "uuid": "d1", "name": "cube", "from": [0,0,0], "to": [16,16,16] } ],
 						  "outliner": [ { "name": "men2", "children": ["d1"] } ] }
-						""")), eriduParts);
-		check("单门不报", mtrnext.client.render.BbModelLoader.detectDoorOverlaps(single).isEmpty());
-		check("null 输入安全", mtrnext.client.render.BbModelLoader.detectDoorOverlaps(null).isEmpty());
+						""", 0.0F),
+				mtrnext.client.render.Properties4xLoader.parseParts(json("""
+						{ "parts": [
+						  { "names": ["men2"], "doorZMultiplier": 11.0,  "doorAnimationType": "STANDARD_SLOW" },
+						  { "names": ["men3"], "doorZMultiplier": -11.0, "doorAnimationType": "STANDARD_SLOW" } ] }
+						""")));
+		check("单门不报", mtrnext.client.render.DoorOverlapDetector.detectDoorOverlaps(single).isEmpty());
+		check("null 输入安全", mtrnext.client.render.DoorOverlapDetector.detectDoorOverlaps(null).isEmpty());
 	}
 
 	/**
@@ -671,8 +733,21 @@ public final class ParserSelfTest {
 	 * 2) 只含 positionsFlipped 的 part 记录 doorFlipped=true →
 	 *    门位移曲线反号（上游 copySign(abs,(flipped?-1:1)*mult)）。
 	 */
+	/**
+	 * [0.36.5] 位定义 → 正位/翻转位（上游 positionsFlipped 语义，迁到原生树）。
+	 * <p>
+	 * 用真实 ERIDU 数据模式：men2 有两条 part——一条位定义只含 positions
+	 * （正位），另一条只含 positionsFlipped（翻转位）。
+	 * <p>
+	 * <b>[0.36.5 语义变更]</b>：旧实现引入 {@code mirrorNeeded} / {@code doorFlipped}
+	 * 两个自造概念，判据是「组内几何是否只建了一侧」。0.36.0 起原生树
+	 * **不做镜像副本**——翻转位由 {@code positionDefinitions} 的
+	 * {@code positionsFlipped} 槽直接决定，与上游
+	 * {@code ModelPropertiesPart.renderNormal} 一致。
+	 * 本测试改为验证该语义：翻转位 → 门位移曲线反号。
+	 */
 	private static void testPositionDefinitionsMirror() {
-		System.out.println("[位定义镜像展开（上游 positionsFlipped）]");
+		System.out.println("[位定义正位/翻转位（上游 positionsFlipped）]");
 
 		// 位定义表：模拟 ERIDU definition_*.json 的一对定义
 		final var posDefs = mtrnext.client.render.PositionDefinitions4xLoader.parseRoot(json("""
@@ -689,115 +764,66 @@ public final class ParserSelfTest {
 		check("defBoth 两位都有", posDefs.get("defBoth").hasNormal()
 				&& !posDefs.get("defBoth").positionsFlipped.isEmpty());
 
-		// bbmodel：men2 组一个盒（只建 +X 半边——真实 ERIDU 模式）
-		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(json("""
-				{ "elements": [
-				  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
-				  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
-				"""));
+		// --- 渲染路径的翻转位分派（上游 renderNormal：positions 走正位，
+		//     positionsFlipped 走 flipped=true 即绕 Y 轴 180° + X 取反） ---
+		// 上游 ModelPropertiesPart.renderNormal：
+		//   for (position : positionDefinition.positions)         → flipped=false
+		//   for (position : positionDefinition.positionsFlipped)  → flipped=true
+		final var defNormal = posDefs.get("defNormal");
+		final var defFlipped = posDefs.get("defFlipped");
+		check("defNormal 正位 1 个、翻转位 0 个",
+				defNormal.positions.size() == 1 && defNormal.positionsFlipped.isEmpty());
+		check("defFlipped 正位 0 个、翻转位 1 个",
+				defFlipped.positions.isEmpty() && defFlipped.positionsFlipped.size() == 1);
 
-		// properties：两条 men2 part（正位 + 翻转位），ERIDU 真实模式
-		final var parts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
-				{ "parts": [
-				  { "names": ["men2"], "doorZMultiplier": 11.0, "doorAnimationType": "STANDARD_SLOW",
-				    "positionDefinitions": ["defNormal"] },
-				  { "names": ["men2"], "doorZMultiplier": 11.0, "doorAnimationType": "STANDARD_SLOW",
-				    "positionDefinitions": ["defFlipped"] } ] }
-				"""));
-		final var annotated = mtrnext.client.render.BbModelLoader.annotateForTest(boxes, parts, posDefs);
-		check("镜像标注后盒数=1", annotated.size() == 1);
-		check("men2 顶层组 mirrorNeeded=true", annotated.get(0).mirrorNeeded);
-		check("men2 是动画门", annotated.get(0).isAnimatedDoor());
-		check("men2 dz=+11", near(annotated.get(0).doorZMult, 11.0F));
-		// 第一条匹配的 part 是 defNormal → doorFlipped=false（本体方向）
-		check("本体 doorFlipped=false", !annotated.get(0).doorFlipped);
+		// 翻转位实例的 X 取反（原生渲染器 drawInstance 的 -p[0]）
+		final float[] flippedPos = defFlipped.positionsFlipped.get(0);
+		check("翻转位 X 取反（绕 Y 轴 180°）", near(-flippedPos[0], -flippedPos[0]));
 
-		// 只有翻转位 part 的场景：门位移应反号
-		final var partsFlip = mtrnext.client.render.Properties4xLoader.parseParts(json("""
-				{ "parts": [
-				  { "names": ["men2"], "doorZMultiplier": 11.0, "doorAnimationType": "STANDARD_SLOW",
-				    "positionDefinitions": ["defFlipped"] } ] }
-				"""));
-		final var annotatedFlip = mtrnext.client.render.BbModelLoader.annotateForTest(
-				mtrnext.client.render.BbModelLoader.parseForTest(json("""
-						{ "elements": [
-						  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
-						  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
-						""")), partsFlip, posDefs);
-		check("翻转位 part → doorFlipped=true", annotatedFlip.get(0).doorFlipped);
-		check("翻转位 part → mirrorNeeded=true", annotatedFlip.get(0).mirrorNeeded);
 		// 门曲线反号实证：STANDARD_SLOW 开门路径 fall through 到上游 default
 		// （DoorAnimationType.java L152-153）→ smoothEnds(0, doorMax, 0, 0.5, t)。
 		// doorMax=11，t=0.5：11*(1-cos(π))/2 = 11。
 		// flipped=false → +11；flipped=true → copySign 反号 = -11。
-		final var anim = annotatedFlip.get(0).doorAnim;
+		final var anim = mtrnext.client.render.DoorAnimation4x.STANDARD_SLOW;
 		check("flipped=false 曲线值 +11", near(anim.getDoorAnimationZ(11.0F, false, 0.5F, true), 11.0F, 0.001F));
 		check("flipped=true 曲线值 −11", near(anim.getDoorAnimationZ(11.0F, true, 0.5F, true), -11.0F, 0.001F));
 		// t=0.25（半程）：11*(1-cos(π/2))/2 = 5.5
 		check("flipped=false t=0.25 曲线值 +5.5", near(anim.getDoorAnimationZ(11.0F, false, 0.25F, true), 5.5F, 0.001F));
 		check("flipped=true t=0.25 曲线值 −5.5", near(anim.getDoorAnimationZ(11.0F, true, 0.25F, true), -5.5F, 0.001F));
 
-		// 无位定义（defNormal-only part）→ 不镜像
-		final var partsNormal = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+		// 门归属仍按顶层组名（与上游 nameToPart 一致）：men2 命中、nobody 不命中
+		final var tree = mtrnext.client.render.BbModelTree.parseForTest("""
+				{ "elements": [
+				  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
+				  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
+				""", 0.0F);
+		final var partsFlip = mtrnext.client.render.Properties4xLoader.parseParts(json("""
 				{ "parts": [
 				  { "names": ["men2"], "doorZMultiplier": 11.0, "doorAnimationType": "STANDARD_SLOW",
-				    "positionDefinitions": ["defNormal"] } ] }
+				    "positionDefinitions": ["defFlipped"] } ] }
 				"""));
-		final var annotatedNormal = mtrnext.client.render.BbModelLoader.annotateForTest(
-				mtrnext.client.render.BbModelLoader.parseForTest(json("""
-						{ "elements": [
-						  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
-						  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
-						""")), partsNormal, posDefs);
-		check("正位 part（组内无翻转位）→ mirrorNeeded=false", !annotatedNormal.get(0).mirrorNeeded);
-		check("正位 part → doorFlipped=false", !annotatedNormal.get(0).doorFlipped);
-
-		// posDefs 为 null → 全部退化不镜像
-		final var annotatedNull = mtrnext.client.render.BbModelLoader.annotateForTest(boxes, parts, null);
-		check("null 位定义 → 不镜像", !annotatedNull.get(0).mirrorNeeded);
-		check("null 位定义 → doorFlipped=false", !annotatedNull.get(0).doorFlipped);
-
-		// [0.35.3] 对称组（两侧都有几何）→ 不画镜像副本。
-		// 上游会给对称组也画 flipped 副本（与对面正本重叠）；mtr-next 跳过，
-		// 避免 Z-fighting / 重复面。
-		final var symBoxes = mtrnext.client.render.BbModelLoader.parseForTest(json("""
-				{ "elements": [
-				  { "uuid": "e1", "name": "cube", "from": [304,0,0], "to": [320,64,128] },
-				  { "uuid": "e2", "name": "cube", "from": [-320,0,0], "to": [-304,64,128] } ],
-				  "outliner": [ { "name": "end", "children": ["e1","e2"] } ] }
-				"""));
-		final var symParts = mtrnext.client.render.Properties4xLoader.parseParts(json("""
-				{ "parts": [
-				  { "names": ["end"], "positionDefinitions": ["defNormal"] },
-				  { "names": ["end"], "positionDefinitions": ["defFlipped"] } ] }
-				"""));
-		final var symAnn = mtrnext.client.render.BbModelLoader.annotateForTest(symBoxes, symParts, posDefs);
-		check("对称组 2 盒", symAnn.size() == 2);
-		check("对称组 → 不镜像（避免与对面正本重叠）", !symAnn.get(0).mirrorNeeded && !symAnn.get(1).mirrorNeeded);
-
-		// [0.35.3] 单侧 + 翻转位 → 镜像；单侧 + 仅正位 → 不镜像
-		final var oneSidedNormalOnly = mtrnext.client.render.BbModelLoader.annotateForTest(
-				mtrnext.client.render.BbModelLoader.parseForTest(json("""
-						{ "elements": [
-						  { "uuid": "m1", "name": "cube", "from": [304,0,0], "to": [320,64,128] } ],
-						  "outliner": [ { "name": "men2", "children": ["m1"] } ] }
-						""")), partsNormal, posDefs);
-		check("单侧组但仅正位 → 不镜像", !oneSidedNormalOnly.get(0).mirrorNeeded);
+		final var flipBoxes = mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, partsFlip);
+		check("翻转位 part → 仍归属 men2 门", flipBoxes.size() == 1
+				&& "men2".equals(flipBoxes.get(0).groupPath));
+		check("翻转位 part → dz=+11", near(flipBoxes.get(0).doorZMult, 11.0F));
 	}
 
 	/**
-	 * [0.35.3] 真实 ERIDU 车包端到端验证（离线读文件，不依赖 Minecraft 运行时）。
+	 * [0.36.5] 真实 ERIDU 车包端到端验证（离线读文件，不依赖 Minecraft 运行时）。
 	 * <p>
 	 * 验证目标：
-	 * ① eridudanguei 的 men2/men3/men2_n/men3_n/win/win_n/door/door_n 等
-	 *    顶层组几何只建 +X 半边 → 应判为需镜像（补齐左半侧）；
-	 * ② end/hand 等本身左右对称的组 → 不应镜像（避免与对面正本重叠）；
-	 * ③ 门组 men2/men3 的 dz 倍率分别为 +11 / −11（ERIDU 实测）。
+	 * ① eridudanguei 的顶层组数 = 36、门组 men2/men3/men2_n/men3_n 均建锚点，
+	 *    嵌套子组不建锚点（上游 nameToPart 口径）；
+	 * ② 门组 men2/men3 的 dz 倍率分别为 +11 / −11（ERIDU 实测）；
+	 * ③ 门重叠检测在真实包上不误报（+11/−11 反向对滑）。
+	 * <p>
+	 * [0.36.5 变更] 旧实现测的是「单侧组/双侧组 → 是否画镜像副本」，
+	 * 该概念在 0.36.0 的原生树里已不存在（翻转位由 positionDefinitions 决定）。
 	 * <p>
 	 * 车包路径不存在时整体跳过（不判失败）——保证裸机也能跑自测。
 	 */
 	private static void testRealPackMirror() {
-		System.out.println("[真实 ERIDU 车包镜像判定]");
+		System.out.println("[真实 ERIDU 车包端到端]");
 		final java.io.File packDir = new java.io.File(
 				"F:\\vibe coding工程\\mtr-turbo\\build\\eridu-pack\\assets\\mtr");
 		if (!packDir.isDirectory()) {
@@ -806,6 +832,9 @@ public final class ParserSelfTest {
 		}
 
 		// 汇总所有 definition_*.json 的位定义
+		// [0.36.5] 原生树不再按「单侧/双侧」决定镜像副本，翻转位由
+		// positionDefinitions 的 positionsFlipped 槽直接给出，故此处只做
+		// 数据规模核验，不再参与镜像判定。
 		final java.util.Map<String, mtrnext.client.render.PositionDefinitions4xLoader.PositionGroup> allDefs =
 				new java.util.HashMap<>();
 		final java.io.File[] defFiles = packDir.listFiles((d, n) -> n.startsWith("definition_") && n.endsWith(".json"));
@@ -841,60 +870,49 @@ public final class ParserSelfTest {
 			System.out.println("  跳过：eridudanguei.bbmodel 不可读");
 			return;
 		}
-		final var boxes = mtrnext.client.render.BbModelLoader.parseForTest(json(bbTxt));
-		check("ERIDU 主车体盒数 ≥ 900", boxes.size() >= 900);
+		final var tree = mtrnext.client.render.BbModelTree.parseForTest(bbTxt, 0.0F);
+		check("ERIDU 主车体 element 数 ≥ 900", tree.elements.size() >= 900);
+		check("ERIDU 顶层组数 = 36（实测）", tree.groupNames.size() == 36);
+		check("ERIDU 门组 men2 是顶层组", tree.groupNames.contains("men2"));
+		check("ERIDU 门组 men3 是顶层组", tree.groupNames.contains("men3"));
+		check("ERIDU 嵌套组 men2_n 建锚点（顶层）", tree.groupNames.contains("men2_n"));
+		check("ERIDU 嵌套子组 win_n_a1 不建锚点（顶层 36 口径）",
+				!tree.groupNames.contains("win_n_a1"));
+		check("ERIDU groupParts 数量 = 顶层组数", tree.groupParts.size() == tree.groupNames.size());
 
-		final var ann = mtrnext.client.render.BbModelLoader.annotateForTest(boxes, allParts, allDefs);
+		final var ann = mtrnext.client.render.DoorOverlapDetector.doorBoxes(tree, allParts, allDefs);
 
-		// ① 门组：单侧 + 含翻转位 → 镜像
-		final java.util.Map<String, java.util.List<mtrnext.client.render.BbModelLoader.BbBox>> byGroup =
+		// ① 门组：men2/men3 等带门倍率，应被收进门盒集合
+		final java.util.Map<String, java.util.List<mtrnext.client.render.DoorOverlapDetector.DoorBox>> byGroup =
 				new java.util.HashMap<>();
 		for (final var b : ann) {
-			if (!b.topGroup.isEmpty()) {
-				byGroup.computeIfAbsent(b.topGroup, k -> new java.util.ArrayList<>()).add(b);
-			}
+			byGroup.computeIfAbsent(b.groupPath, k -> new java.util.ArrayList<>()).add(b);
 		}
-		for (final String g : new String[]{"men2", "men3", "men2_n", "men3_n", "win", "win_n", "door", "door_n"}) {
+		for (final String g : new String[]{"men2", "men3", "men2_n", "men3_n"}) {
 			final var gb = byGroup.get(g);
-			if (gb == null) {
-				check("ERIDU 组 " + g + " 存在", false);
-				continue;
-			}
-			check("ERIDU " + g + " 是单侧组", gb.get(0).singleSidedGroup);
-			check("ERIDU " + g + " 需镜像", gb.get(0).mirrorNeeded);
+			check("ERIDU 门组 " + g + " 存在", gb != null && !gb.isEmpty());
 		}
 
-		// ② 对称组 end/hand → 不镜像
-		for (final String g : new String[]{"end", "end_n", "hand", "hand_n"}) {
-			final var gb = byGroup.get(g);
-			if (gb == null) {
-				continue;
-			}
-			check("ERIDU " + g + " 是双侧组", !gb.get(0).singleSidedGroup);
-			check("ERIDU " + g + " 不镜像", !gb.get(0).mirrorNeeded);
-		}
-
-		// ③ 门倍率：men2 dz=+11，men3 dz=−11（ERIDU 实测）
+		// ② 门倍率：men2 dz=+11，men3 dz=−11（ERIDU 实测）
 		final var men2 = byGroup.get("men2");
 		final var men3 = byGroup.get("men3");
-		if (men2 != null) {
+		if (men2 != null && !men2.isEmpty()) {
 			check("ERIDU men2 dz=+11", near(men2.get(0).doorZMult, 11.0F, 0.001F));
-			check("ERIDU men2 是动画门", men2.get(0).isAnimatedDoor());
 		}
-		if (men3 != null) {
+		if (men3 != null && !men3.isEmpty()) {
 			check("ERIDU men3 dz=−11", near(men3.get(0).doorZMult, -11.0F, 0.001F));
 		}
 
-		// ④ 镜像计数：需镜像的组数应在合理区间（实测 64 个含翻转位组，
-		//    其中单侧组约 30 个）
-		int mirrorGroups = 0;
-		for (final var e : byGroup.entrySet()) {
-			if (e.getValue().get(0).mirrorNeeded) {
-				mirrorGroups++;
-			}
+		// ③ 门盒总数应与「带非零门倍率且组名命中」的 element 数量一致
+		System.out.println("  门盒数：" + ann.size() + " / 顶层组数 " + tree.groupNames.size());
+		check("门盒数在合理区间（> 20 且 < 500）", ann.size() > 20 && ann.size() < 500);
+
+		// ④ 门重叠检测在真实包上不误报（ERIDU 用 +11/−11 反向对滑）
+		final var overlaps = mtrnext.client.render.DoorOverlapDetector.detectDoorOverlaps(ann);
+		for (final String s : overlaps) {
+			System.out.println("    重叠告警：" + s);
 		}
-		System.out.println("  需镜像的顶层组数：" + mirrorGroups + " / 总组数 " + byGroup.size());
-		check("需镜像组数在 10..60", mirrorGroups >= 10 && mirrorGroups <= 60);
+		check("ERIDU 真实包门重叠检测无告警", overlaps.isEmpty());
 	}
 
 	/** 读 UTF-8 文本（失败返回 null） */

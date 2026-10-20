@@ -35,8 +35,9 @@ public abstract class CustomResourcesReloadMixin {
 	private static void mtrnext$reload4xPacks(net.minecraft.server.packs.resources.ResourceManager manager, CallbackInfo ci) {
 		try {
 			// [0.35] 原生模型树缓存失效（bbmodel + properties 组合键）
+			// [0.36.5] 旧手算加载器 BbModelLoader 已删除（BbModelTreeCache.invalidate()
+			//          内部已调用 BbModelTree.invalidate() + 两个数据层缓存失效）
 			mtrnext.client.render.BbModelTreeCache.invalidate();
-			mtrnext.client.render.BbModelLoader.invalidate();
 			mtrnext.pack.VehiclePackLoader.reload(manager);
 			// [0.5] 4.0 车辆注册进 YMTR 车型表（发车/渲染可解析 family 名）
 			mtrnext.formation.TrainTypeBridge.registerAll4xVehicles();

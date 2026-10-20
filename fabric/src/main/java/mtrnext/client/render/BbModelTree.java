@@ -102,11 +102,42 @@ public final class BbModelTree {
 		public final float sizeX;
 		public final float sizeY;
 		public final float sizeZ;
+		/**
+		 * [0.36.5] 上游 {@code BlockbenchElement.setModelPart} 的
+		 * {@code origin}（元素自身原点，bbmodel 像素，已含 modelYOffset）
+		 * 与 {@code rotation}（角度制）。
+		 * <p>
+		 * 保留它们才能复刻上游返回的 {@code Box}
+		 * （{@code docs/_upstream/BlockbenchElement.java:48-59}），
+		 * 该 Box 是上游门重叠检测（{@code getOpenDoorBounds}）的输入。
+		 */
+		public final float originX;
+		public final float originY;
+		public final float originZ;
+		public final float rotationX;
+		public final float rotationY;
+		public final float rotationZ;
+		/**
+		 * [0.36.5] 盒体在 MC 空间的位置（像素），与上游 L34-36 一致：
+		 * {@code x = -to[0] - originX}、{@code y = -to[1] - originY - modelYOffset*16}、
+		 * {@code z = from[2] - originZ}。
+		 */
+		public final float cubeX;
+		public final float cubeY;
+		public final float cubeZ;
+		/** [0.36.5] 盒体尺寸（像素），上游 L37-39 的 round(to - from) */
+		public final float pxSizeX;
+		public final float pxSizeY;
+		public final float pxSizeZ;
 
 		Element(String uuid, String name, String groupName, ModelPart part, ModelPart holder,
 				List<ModelPart> chain,
 				float centerX, float centerY, float centerZ,
-				float sizeX, float sizeY, float sizeZ) {
+				float sizeX, float sizeY, float sizeZ,
+				float originX, float originY, float originZ,
+				float rotationX, float rotationY, float rotationZ,
+				float cubeX, float cubeY, float cubeZ,
+				float pxSizeX, float pxSizeY, float pxSizeZ) {
 			this.uuid = uuid;
 			this.name = name;
 			this.groupName = groupName;
@@ -119,6 +150,83 @@ public final class BbModelTree {
 			this.sizeX = sizeX;
 			this.sizeY = sizeY;
 			this.sizeZ = sizeZ;
+			this.originX = originX;
+			this.originY = originY;
+			this.originZ = originZ;
+			this.rotationX = rotationX;
+			this.rotationY = rotationY;
+			this.rotationZ = rotationZ;
+			this.cubeX = cubeX;
+			this.cubeY = cubeY;
+			this.cubeZ = cubeZ;
+			this.pxSizeX = pxSizeX;
+			this.pxSizeY = pxSizeY;
+			this.pxSizeZ = pxSizeZ;
+		}
+
+		/**
+		 * [0.36.5] 复刻上游 {@code BlockbenchElement.setModelPart} 返回的
+		 * {@code Box}（BB 坐标系，单位：格），并<b>归一化</b>。
+		 * <p>
+		 * 上游（{@code docs/_upstream/BlockbenchElement.java:48-59}）：
+		 * <pre>
+		 * vector1 = (x, y, z).rotateX(rx).rotateY(ry).rotateZ(rz)
+		 * vector2 = (x+sizeX, y+sizeY, z+sizeZ).rotateX(rx).rotateY(ry).rotateZ(rz)
+		 * Box(-(v1.x+originX)/16, -(v1.y+originY)/16, -(v1.z+originZ)/16,
+		 *     -(v2.x+originX)/16, -(v2.y+originY)/16, -(v2.z+originZ)/16)
+		 * </pre>
+		 * 旋转角为弧度制（上游 L26-28：rx=rad(-r0), ry=rad(-r1), rz=rad(+r2)）。
+		 * <p>
+		 * <b>[0.36.5 归一化决策]</b>：上游 Box 的前三个参数是"对角点 1"、
+		 * 后三个是"对角点 2"，<b>不是</b>有序的 min/max——因为 X/Y/Z 全部取负，
+		 * 三轴通常<b>倒序</b>（minX > maxX）。MC 的 {@code Box.intersects}
+		 * 对倒序轴恒 false，因此上游 {@code testDoors} 对 bbmodel 车体
+		 * <b>实际失效</b>（永不报重叠，与其 javadoc 意图相悖）。
+		 * 本方法返回<b>归一化后</b>的 [minX, minY, minZ, maxX, maxY, maxZ]，
+		 * 使门重叠检测（{@link DoorOverlapDetector}）能实现上游的<b>意图</b>。
+		 *
+		 * @return 6 元数组 [minX, minY, minZ, maxX, maxY, maxZ]（格，已归一化）
+		 */
+		public float[] upstreamBox() {
+			final double rx = Math.toRadians(-rotationX);
+			final double ry = Math.toRadians(-rotationY);
+			final double rz = Math.toRadians(rotationZ);
+
+			final double[] v1 = rotate(cubeX, cubeY, cubeZ, rx, ry, rz);
+			final double[] v2 = rotate(cubeX + pxSizeX, cubeY + pxSizeY, cubeZ + pxSizeZ, rx, ry, rz);
+			final float x1 = (float) (-(v1[0] + originX) / 16.0);
+			final float y1 = (float) (-(v1[1] + originY) / 16.0);
+			final float z1 = (float) (-(v1[2] + originZ) / 16.0);
+			final float x2 = (float) (-(v2[0] + originX) / 16.0);
+			final float y2 = (float) (-(v2[1] + originY) / 16.0);
+			final float z2 = (float) (-(v2[2] + originZ) / 16.0);
+			return new float[]{
+					Math.min(x1, x2), Math.min(y1, y2), Math.min(z1, z2),
+					Math.max(x1, x2), Math.max(y1, y2), Math.max(z1, z2)};
+		}
+
+		/** 上游 {@code Vector3d.rotateX().rotateY().rotateZ()}（先 X 后 Y 后 Z） */
+		private static double[] rotate(double x, double y, double z, double rx, double ry, double rz) {
+			// rotateX
+			double cos = Math.cos(rx);
+			double sin = Math.sin(rx);
+			double ny = y * cos - z * sin;
+			double nz = y * sin + z * cos;
+			y = ny;
+			z = nz;
+			// rotateY
+			cos = Math.cos(ry);
+			sin = Math.sin(ry);
+			double nx = x * cos + z * sin;
+			nz = -x * sin + z * cos;
+			x = nx;
+			z = nz;
+			// rotateZ
+			cos = Math.cos(rz);
+			sin = Math.sin(rz);
+			nx = x * cos - y * sin;
+			ny = x * sin + y * cos;
+			return new double[]{nx, ny, z};
 		}
 	}
 
@@ -362,7 +470,11 @@ public final class BbModelTree {
 			}
 			elements.add(new Element(draft.uuid, draft.name, draft.groupName, part, holder, chain,
 					draft.centerX, draft.centerY, draft.centerZ,
-					draft.sizeX, draft.sizeY, draft.sizeZ));
+					draft.sizeX, draft.sizeY, draft.sizeZ,
+					draft.originX, draft.originY, draft.originZ,
+					draft.rotationX, draft.rotationY, draft.rotationZ,
+					draft.cubeX, draft.cubeY, draft.cubeZ,
+					draft.pxSizeX, draft.pxSizeY, draft.pxSizeZ));
 		}
 
 		MtrNext.LOGGER.debug("[bbmodel] {} 构建完成：{} 组 / {} 元素 / 纹理 {}x{}",
@@ -387,11 +499,28 @@ public final class BbModelTree {
 		final float sizeX;
 		final float sizeY;
 		final float sizeZ;
+		// [0.36.5] 上游 Box 复刻所需
+		final float originX;
+		final float originY;
+		final float originZ;
+		final float rotationX;
+		final float rotationY;
+		final float rotationZ;
+		final float cubeX;
+		final float cubeY;
+		final float cubeZ;
+		final float pxSizeX;
+		final float pxSizeY;
+		final float pxSizeZ;
 
 		ElementDraft(String uuid, String name, String groupName, List<String> path, List<String> holderPath,
 				List<String> linkNames,
 				float centerX, float centerY, float centerZ,
-				float sizeX, float sizeY, float sizeZ) {
+				float sizeX, float sizeY, float sizeZ,
+				float originX, float originY, float originZ,
+				float rotationX, float rotationY, float rotationZ,
+				float cubeX, float cubeY, float cubeZ,
+				float pxSizeX, float pxSizeY, float pxSizeZ) {
 			this.uuid = uuid;
 			this.name = name;
 			this.groupName = groupName;
@@ -404,6 +533,18 @@ public final class BbModelTree {
 			this.sizeX = sizeX;
 			this.sizeY = sizeY;
 			this.sizeZ = sizeZ;
+			this.originX = originX;
+			this.originY = originY;
+			this.originZ = originZ;
+			this.rotationX = rotationX;
+			this.rotationY = rotationY;
+			this.rotationZ = rotationZ;
+			this.cubeX = cubeX;
+			this.cubeY = cubeY;
+			this.cubeZ = cubeZ;
+			this.pxSizeX = pxSizeX;
+			this.pxSizeY = pxSizeY;
+			this.pxSizeZ = pxSizeZ;
 		}
 	}
 
@@ -514,9 +655,16 @@ public final class BbModelTree {
 		final float centerY = (y + sizeY / 2.0F) / 16.0F;
 		final float centerZ = (z + sizeZ / 2.0F) / 16.0F;
 
+		// [0.36.5] 上游 Box 复刻所需的原始量：
+		//   origin（元素自身原点，BB 像素）/ rotation（角度制）
+		//   cube(x,y,z) 与尺寸（像素）——即上游 L34-39 的中间量
 		drafts.add(new ElementDraft(str(element, "uuid", ""), str(element, "name", ""),
 				topGroupName, built.path, holder.path, holder.linkNames, centerX, centerY, centerZ,
-				sizeX / 16.0F, sizeY / 16.0F, sizeZ / 16.0F));
+				sizeX / 16.0F, sizeY / 16.0F, sizeZ / 16.0F,
+				originX, originY, originZ,
+				f(rotation, 0), f(rotation, 1), f(rotation, 2),
+				x, y, z,
+				sizeX, sizeY, sizeZ));
 	}
 
 	// ------------------------------------------------------------------
