@@ -39,6 +39,7 @@ public final class ParserSelfTest {
 		testPositionDefinitionsMirror();
 		testRealPackMirror();
 		testDoorTimingWindows();
+		testDoorMovementInterpolation();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
@@ -972,6 +973,97 @@ public final class ParserSelfTest {
 		// DOOR_MOVE_TIME 常量与上游一致
 		check("DOOR_MOVE_TIME=3200",
 				mtrnext.client.render.Properties4xLoader.PartInfo.DOOR_MOVE_TIME == 3200.0);
+	}
+
+	/**
+	 * [0.36.2] 门位移插值层（上游 {@code DoorMovementInterpolation}）。
+	 * <p>
+	 * 上游 {@code PersistentVehicleData.java:164-178}：
+	 * <pre>
+	 * private static class DoorMovementInterpolation {
+	 *     private boolean opening;
+	 *     private final Interpolation interpolation = new Interpolation(500);
+	 *     private float setAndGet(double value, boolean opening) {
+	 *         interpolation.setValue(value, this.opening != opening);
+	 *         this.opening = opening;
+	 *         return (float) interpolation.getValue();
+	 *     }
+	 * }
+	 * </pre>
+	 * 上游 {@code Interpolation} 是 500 ms <b>线性</b>混合，方向翻转时从
+	 * <b>当前插值结果</b>续接（{@code oldValue = getValue()}）。
+	 * <p>
+	 * 核心可观测性质：<b>翻转不跳变</b>——方向翻转的那一刻，返回值仍等于
+	 * 翻转前的插值值，而不是瞬跳到新曲线值。这正是这层插值存在的意义。
+	 */
+	private static void testDoorMovementInterpolation() {
+		System.out.println("[门位移插值层（上游 DoorMovementInterpolation）]");
+
+		// key 规则：上游 PersistentVehicleData.java:99
+		check("key 规则 = 倍率_类型_翻转",
+				mtrnext.client.render.DoorMovementInterpolation.key(11.0, "STANDARD", false)
+						.equals("11.0_STANDARD_false"));
+		check("key 区分翻转",
+				!mtrnext.client.render.DoorMovementInterpolation.key(11.0, "STANDARD", false)
+						.equals(mtrnext.client.render.DoorMovementInterpolation.key(11.0, "STANDARD", true)));
+		check("key 区分倍率",
+				!mtrnext.client.render.DoorMovementInterpolation.key(11.0, "STANDARD", false)
+						.equals(mtrnext.client.render.DoorMovementInterpolation.key(-11.0, "STANDARD", false)));
+
+		// 首次调用：上游 Interpolation 初始 oldValue=0、startMillis=0；
+		// setAndGet(11.0, opening=true) 时 this.opening(false) != opening(true)
+		// → 触发 startInterpolation → oldValue = getValue() = 0，
+		//   startMillis = now，latestValue = 11
+		// → 同一毫秒内 getValue() 返回 oldValue = 0（线性插值的起点）。
+		// 即上游的插值器**第一次调用返回 0**，从 0 开始向 11 过渡。
+		final var interp = new mtrnext.client.render.DoorMovementInterpolation();
+		final float first = interp.setAndGet(10.0, true);
+		check("首次调用返回插值起点 0（上游行为）", near(first, 0.0F, 0.001F));
+
+		// 等插值收敛：超过 500 ms 后 getValue() 直接返回 latestValue = 10
+		try {
+			Thread.sleep(650L);
+		} catch (final InterruptedException ignored) {
+			Thread.currentThread().interrupt();
+		}
+		final float converged = interp.setAndGet(10.0, true);
+		check("超时后收敛到 latestValue", near(converged, 10.0F, 0.01F));
+
+		// 同方向更新：上游 setValue 只在 startInterpolation 为真时才重启窗口，
+		// 且 startMillis 不变 → difference 继续增长 → 超出 500 ms 后直接取 latestValue。
+		// 即：**同方向变化不产生过渡**（过渡只在方向翻转时发生）。
+		final float afterSecond = interp.setAndGet(0.0, true);
+		check("同方向变化不跳变也不插值（超出窗口后取 latestValue）",
+				near(afterSecond, 0.0F, 0.01F));
+
+		// 方向翻转：应重启 500 ms 插值窗口——返回值仍接近翻转前的插值结果
+		// （翻转前 oldValue 已被同步为 0），而不是瞬跳到新目标 10
+		final float beforeFlip = interp.setAndGet(0.0, true);
+		final float afterFlip = interp.setAndGet(10.0, false); // 方向翻转 + 目标值跳到 10
+		check("方向翻转不跳变（值仍在旧插值附近）",
+				Math.abs(afterFlip - beforeFlip) < 1.0);
+		check("方向翻转后不等于新目标值 10", Math.abs(afterFlip - 10.0) > 1.0);
+
+		// 收敛：等待超过 500 ms 后应收敛到目标值
+		try {
+			Thread.sleep(650L);
+		} catch (final InterruptedException ignored) {
+			Thread.currentThread().interrupt();
+		}
+		final float settled = interp.setAndGet(10.0, false);
+		check("超时后收敛到目标值", near(settled, 10.0F, 0.01F));
+
+		// 上游 Interpolation.setValueDirect：不插值，直接设值
+		final var direct = new mtrnext.client.render.DoorMovementInterpolation.Interpolation(500);
+		direct.setValueDirect(4.0);
+		check("setValueDirect 直接取值", near((float) direct.getValue(), 4.0F, 0.001F));
+
+		// 线性插值：中间态应落在两端之间
+		final var lin = new mtrnext.client.render.DoorMovementInterpolation.Interpolation(500);
+		lin.setValue(0.0, false);
+		lin.setValue(10.0, false); // 非重启 → 继续插值
+		final double v = lin.getValue();
+		check("线性插值中间态在 [0,10]", v >= 0.0 && v <= 10.0);
 	}
 
 	/** 浮点近似比较（容差 1e-4） */
