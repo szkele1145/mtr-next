@@ -38,6 +38,7 @@ public final class ParserSelfTest {
 		testDoorOverlapDetection();
 		testPositionDefinitionsMirror();
 		testRealPackMirror();
+		testDoorTimingWindows();
 		System.out.println();
 		System.out.println("PASS=" + pass + " FAIL=" + fail);
 		if (fail > 0) {
@@ -878,6 +879,99 @@ public final class ParserSelfTest {
 		} catch (final Exception e) {
 			return null;
 		}
+	}
+
+	/**
+	 * [0.35.4] 门行程时序窗口 + 闪烁（上游 modelPropertiesPart.json schema 权威字段）。
+	 * <p>
+	 * 上游 ModelPropertiesPart.java:342-345：
+	 * {@code shouldRender = (from==0 && until==0) || isBetween(|doorValue|*DOOR_MOVE_TIME, from, until)}
+	 * 上游 core/data/Vehicle.java:59：{@code DOOR_MOVE_TIME = 3200}
+	 * 上游 core/tool/Utilities.java:61-63：{@code isBetween(v,a,b) = v>=min(a,b) && v<=max(a,b)}
+	 * <p>
+	 * 用 ERIDU 真实取值：doordengguan_n from=100；doordengshan_n from=50 +
+	 * flash 500/500；lcdp_dooryincang from=1；lcdp_doorshanshuo flash 800/800。
+	 */
+	private static void testDoorTimingWindows() {
+		System.out.println("[门行程时序窗口 + 闪烁（上游 schema 字段）]");
+
+		// 无窗口 → 恒渲染
+		final var noWindow = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [ { "names": ["men2"], "doorZMultiplier": 11.0 } ] }
+				""")).get(0);
+		check("无时序字段 → 开门时恒渲染", noWindow.shouldRenderAt(0.0, true));
+		check("无时序字段 → 关门时恒渲染", noWindow.shouldRenderAt(1.0, false));
+
+		// ERIDU doordengguan_n：from=100 双向，until=0 → 窗口 [0,100] ms
+		final var guang = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [ { "names": ["doordengguan_n"],
+				    "renderFromOpeningDoorTime": 100, "renderFromClosingDoorTime": 100 } ] }
+				""")).get(0);
+		check("from=100 被解析", guang.renderFromOpeningDoorTime == 100 && guang.renderFromClosingDoorTime == 100);
+		// 门开度 0 → 行程 0 ms ∈ [0,100] → 渲染
+		check("门全关(0ms) 在窗口内", guang.shouldRenderAt(0.0, true));
+		// 行程 100 ms → doorValue = 100/3200 = 0.03125 → 恰在边界 → 渲染
+		check("行程 100ms 边界内", guang.shouldRenderAt(100.0 / 3200.0, true));
+		// 行程 200 ms → doorValue = 0.0625 → 超出 → 不渲染
+		check("行程 200ms 超出窗口", !guang.shouldRenderAt(200.0 / 3200.0, true));
+		// 门全开 → 3200 ms → 远超 → 不渲染
+		check("门全开(3200ms) 超出窗口", !guang.shouldRenderAt(1.0, true));
+		// 关门方向用 closing 字段（此处也是 100）
+		check("关门方向同样受限", !guang.shouldRenderAt(1.0, false));
+
+		// ERIDU doordengshan_n：仅开门 from=50（closing 全 0 → 关门时恒渲染）
+		final var shan = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [ { "names": ["doordengshan_n"], "renderFromOpeningDoorTime": 50 } ] }
+				""")).get(0);
+		check("from=50 被解析", shan.renderFromOpeningDoorTime == 50);
+		check("开门 行程 40ms 在窗口内", shan.shouldRenderAt(40.0 / 3200.0, true));
+		check("开门 行程 60ms 超出", !shan.shouldRenderAt(60.0 / 3200.0, true));
+		check("关门方向无窗口 → 恒渲染", shan.shouldRenderAt(1.0, false));
+
+		// 显式区间 [from, until]：直到 500ms 都渲染
+		final var range = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [ { "names": ["x"],
+				    "renderFromOpeningDoorTime": 100, "renderUntilOpeningDoorTime": 500 } ] }
+				""")).get(0);
+		check("区间下界前不渲染", !range.shouldRenderAt(50.0 / 3200.0, true));
+		check("区间内渲染", range.shouldRenderAt(300.0 / 3200.0, true));
+		check("区间上界后不渲染", !range.shouldRenderAt(600.0 / 3200.0, true));
+
+		// 倒序区间（from > until）：上游 isBetween 用 min/max，应仍可工作
+		final var rev = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [ { "names": ["y"],
+				    "renderFromOpeningDoorTime": 500, "renderUntilOpeningDoorTime": 100 } ] }
+				""")).get(0);
+		check("倒序区间 200ms 落在 [100,500]", rev.shouldRenderAt(200.0 / 3200.0, true));
+		check("倒序区间 600ms 超出", !rev.shouldRenderAt(600.0 / 3200.0, true));
+
+		// 负门值取绝对值（上游 |doorValue|）
+		check("负门值取绝对值", guang.shouldRenderAt(-0.01, true) == guang.shouldRenderAt(0.01, true));
+
+		// 闪烁：flashOnTime=500, flashOffTime=500 → 周期 1000ms
+		final var flash = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [ { "names": ["doordengshan_n"],
+				    "flashOnTime": 500, "flashOffTime": 500 } ] }
+				""")).get(0);
+		check("flashOnTime=500 被解析", flash.flashOnTime == 500 && flash.flashOffTime == 500);
+		// 上游：currentTimeMillis % 1000 > 500 → 亮
+		// （即 t%1000 落在 (500,1000] 为亮；t=1100 → 1100%1000=100 → 灭）
+		check("t=600ms 亮", flash.flashOn(600L));
+		check("t=400ms 灭", !flash.flashOn(400L));
+		check("t=1100ms 灭（%1000=100）", !flash.flashOn(1100L));
+		check("t=900ms 亮", flash.flashOn(900L));
+		// 无闪烁配置 → 常亮
+		check("无闪烁配置 → 常亮", noWindow.flashOn(1234L));
+		// 单侧配置：flashOn=800, flashOff=0 → 周期 800，%800 > 0 → 除整除点外都亮
+		final var flash2 = mtrnext.client.render.Properties4xLoader.parseParts(json("""
+				{ "parts": [ { "names": ["z"], "flashOnTime": 800, "flashOffTime": 0 } ] }
+				""")).get(0);
+		check("flashOff=0 → t=1ms 亮", flash2.flashOn(1L));
+		check("flashOff=0 → t=800ms 灭（整除点）", !flash2.flashOn(800L));
+
+		// DOOR_MOVE_TIME 常量与上游一致
+		check("DOOR_MOVE_TIME=3200",
+				mtrnext.client.render.Properties4xLoader.PartInfo.DOOR_MOVE_TIME == 3200.0);
 	}
 
 	/** 浮点近似比较（容差 1e-4） */

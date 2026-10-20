@@ -136,6 +136,23 @@ public final class Properties4xLoader {
 			info.condition = str(p, "condition", "NORMAL");
 			info.renderStage = str(p, "renderStage", "EXTERIOR");
 			info.type = str(p, "type", "NORMAL");
+			// [0.35.4] 门行程时序窗口（上游 modelPropertiesPart.json schema 权威字段，
+			// 上游 ModelPropertiesPart.java:342-345 消费）：
+			//   shouldRender = (from==0 && until==0)
+			//               || isBetween(|doorValue| * DOOR_MOVE_TIME, from, until)
+			// 单位 = 毫秒；DOOR_MOVE_TIME = 3200（上游 core/data/Vehicle.java:59）。
+			// 语义：部件只在门的行程落在 [from, until] 毫秒窗口内才渲染——
+			// 典型用途是"门灯管只在开门最初 100ms 显示"。
+			info.renderFromOpeningDoorTime = (int) dbl(p, "renderFromOpeningDoorTime", 0.0);
+			info.renderUntilOpeningDoorTime = (int) dbl(p, "renderUntilOpeningDoorTime", 0.0);
+			info.renderFromClosingDoorTime = (int) dbl(p, "renderFromClosingDoorTime", 0.0);
+			info.renderUntilClosingDoorTime = (int) dbl(p, "renderUntilClosingDoorTime", 0.0);
+			// [0.35.4] 闪烁（上游 ModelPropertiesPart.java:317-320）：
+			//   flashOn = flashOnTime + flashOffTime == 0
+			//           || (currentTimeMillis % (flashOnTime + flashOffTime)) > flashOffTime
+			// 不闪时上游把 Y 推到 Integer.MAX_VALUE（移出视野）而非跳过绘制。
+			info.flashOnTime = (int) dbl(p, "flashOnTime", 0.0);
+			info.flashOffTime = (int) dbl(p, "flashOffTime", 0.0);
 			// [0.35.3] 位定义名（上游 ModelPropertiesPart.positionDefinitions）：
 			// 指向 definition_*.json 里的位置组，决定该部件的 flipped 归属。
 			if (p.has("positionDefinitions") && p.get("positionDefinitions").isJsonArray()) {
@@ -162,6 +179,68 @@ public final class Properties4xLoader {
 		public String condition = "NORMAL";
 		public String renderStage = "EXTERIOR";
 		public String type = "NORMAL";
+		// [0.35.4] 门行程时序窗口（毫秒；0 = 不限制）
+		public int renderFromOpeningDoorTime = 0;
+		public int renderUntilOpeningDoorTime = 0;
+		public int renderFromClosingDoorTime = 0;
+		public int renderUntilClosingDoorTime = 0;
+		// [0.35.4] 闪烁周期（毫秒；两者皆 0 = 常亮）
+		public int flashOnTime = 0;
+		public int flashOffTime = 0;
+
+		/**
+		 * [0.35.4] 该部件在给定门状态（0=关，1=全开）下是否应渲染。
+		 * <p>
+		 * 上游 {@code ModelPropertiesPart.java:342-345}：
+		 * <pre>
+		 * if (opening) {
+		 *     shouldRender = (from == 0 &amp;&amp; until == 0)
+		 *                 || Utilities.isBetween(|doorValue| * DOOR_MOVE_TIME, from, until);
+		 * } else {
+		 *     shouldRender = (from == 0 &amp;&amp; until == 0)
+		 *                 || Utilities.isBetween(|doorValue| * DOOR_MOVE_TIME, from, until);
+		 * }
+		 * </pre>
+		 * 其中 {@code DOOR_MOVE_TIME = 3200}（上游 core/data/Vehicle.java:59），
+		 * {@code isBetween(v,a,b)} = {@code v >= min(a,b) &amp;&amp; v <= max(a,b)}
+		 * （上游 core/tool/Utilities.java:61-63，倒序区间也支持）。
+		 * <p>
+		 * <b>纯数据层判定</b>：渲染端接入前，先让语义可离线回归。
+		 *
+		 * @param doorValue 门开度（0..1），取绝对值
+		 * @param opening   true = 开门中，false = 关门中
+		 */
+		public boolean shouldRenderAt(double doorValue, boolean opening) {
+			final int from = opening ? renderFromOpeningDoorTime : renderFromClosingDoorTime;
+			final int until = opening ? renderUntilOpeningDoorTime : renderUntilClosingDoorTime;
+			if (from == 0 && until == 0) {
+				return true; // 上游：无窗口 = 恒渲染
+			}
+			final double elapsed = Math.abs(doorValue) * DOOR_MOVE_TIME;
+			return elapsed >= Math.min(from, until) && elapsed <= Math.max(from, until);
+		}
+
+		/**
+		 * [0.35.4] 上游 {@code Vehicle.DOOR_MOVE_TIME}（core/data/Vehicle.java:59）。
+		 * 门从全关到全开所需的毫秒数；门时序窗口与门开度都以此为尺度。
+		 */
+		public static final double DOOR_MOVE_TIME = 3200.0;
+
+		/**
+		 * [0.35.4] 闪烁状态（上游 ModelPropertiesPart.java:317）：
+		 * <pre>
+		 * flashOn = flashOnTime + flashOffTime == 0
+		 *         || (currentTimeMillis % (flashOnTime + flashOffTime)) > flashOffTime
+		 * </pre>
+		 *
+		 * @param currentTimeMillis 当前时间戳（可注入以便测试）
+		 */
+		public boolean flashOn(long currentTimeMillis) {
+			if (flashOnTime + flashOffTime == 0) {
+				return true; // 上游：无闪烁配置 = 常亮
+			}
+			return (currentTimeMillis % (flashOnTime + flashOffTime)) > flashOffTime;
+		}
 	}
 
 	/** 连接面渲染属性（gangway/barrier 双组，程序化几何参数 + 贴图） */
