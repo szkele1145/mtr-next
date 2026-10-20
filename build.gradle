@@ -96,3 +96,13 @@ tasks.register('parserSelfTest', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = 'mtrnext.ParserSelfTest'
 }
+
+// [0.36.0] 原生模型树自测：验证 bbmodel → MC ModelPart 树的构造语义
+// （组链 pivot 差分 / 元素旋转 / box-UV 布局 / mirror 标志 / modelYOffset）。
+// 依赖 MC classpath（ModelPart），但不需要客户端与图形环境。
+tasks.register('bbModelTreeTest', JavaExec) {
+	group = 'verification'
+	description = '原生模型树自测（bbmodel → ModelPart 构造语义）'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'mtrnext.BbModelTreeTest'
+}

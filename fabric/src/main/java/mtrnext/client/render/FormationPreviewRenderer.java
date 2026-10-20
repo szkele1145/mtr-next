@@ -8,21 +8,21 @@ import mtrnext.formation.FormationStore;
 import mtrnext.pack.VehiclePackLoader;
 import mtrnext.pack.VehicleResource;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.renderer.MultiBufferSource;
-import org.joml.Matrix4f;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 
-import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
- * [0.29 适配] 编组屏 3D 预览——bbmodel 自定义盒逐面绘制版。
+ * [0.35 重写] 编组屏 3D 预览——与主渲染器共用 MC 原生 {@code ModelPart} 树。
  * <p>
- * 旧实现经 ModelPart bake（per-face UV 缺陷）——与渲染器同步换到
- * BbBox 直绘。预览门盒固定偏移 -0.75F（门已打开态，露出车内）。
+ * 旧实现走手算四边面路径（{@code BbBox} 直绘），与主渲染器同样存在
+ * 旋转丢失 / box-UV 错位等缺陷。改为共用 {@link BbModelTree} 后，
+ * 预览与实车渲染的几何必然一致（同一份构造链）。
  * <p>
- * [0.34] 多模型层：遍历 {@code res.models} 全部层，每层按自己的
- * {@code textureResource} 取 buffer（调用方传 MultiBufferSource）。
- * 旧版只画第 0 层，5 层车包在预览里同样丢 4 层。
+ * 预览是静态语境，门按"完全打开"取值（time=1），与主渲染器的门曲线同源。
  */
 public final class FormationPreviewRenderer {
 
@@ -50,35 +50,7 @@ public final class FormationPreviewRenderer {
 				if (!car.forward) {
 					poseStack.mulPose(com.mojang.math.Axis.YP.rotationDegrees(180));
 				}
-				final Matrix4f pose = poseStack.last().pose();
-				// [0.35] 与 BbModelTrainRenderer 同语义：门动画用上游曲线。
-				// 预览是静态截图语境，门按"完全打开"取值（time=1）；
-				// 非门部件仍沿用旧的固定 Z 偏移（3.x 语义）。
-				for (final VehicleResource.ModelLayer layer : res.models) {
-					final List<BbModelLoader.BbBox> boxes = BbModelLoader.loadAnnotated(
-							Minecraft.getInstance().getResourceManager(), layer.modelResource, layer.propertiesResource,
-							layer.positionDefinitionsResource);
-					if (boxes == null || boxes.isEmpty()) {
-						continue;
-					}
-					final VertexConsumer vc = buffers.getBuffer(
-							net.minecraft.client.renderer.RenderType.entityCutoutNoCull(
-									BbModelTrainRenderer.texLocation(layer.textureResource)));
-					// 与主渲染器共享 winding，避免两处顶点顺序分道扬镳
-					// [0.35.3] 镜像副本同主渲染器：men2/win/door 等顶层组只建
-					// +X 半边，预览里也需靠 flipped 副本补齐另一侧。
-					for (final BbModelLoader.BbBox box : boxes) {
-						if (box.mirrorNeeded) {
-							BbModelTrainRenderer.drawMirrorPair(vc, pose, box, 1.0F, true, -0.75F);
-						} else if (box.isAnimatedDoor()) {
-							final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, box.doorFlipped, 1.0F) / 16.0F;
-							final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, box.doorFlipped, 1.0F, true) / 16.0F;
-							BbModelTrainRenderer.drawBoxFaces(vc, pose, box, dx, dz);
-						} else {
-							BbModelTrainRenderer.drawBoxFaces(vc, pose, box, box.isDoor ? -0.75F : 0.0F);
-						}
-					}
-				}
+				renderCar(poseStack, buffers, res);
 				poseStack.popPose();
 
 				carIndex++;
@@ -86,5 +58,68 @@ public final class FormationPreviewRenderer {
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("formation preview render failed", t);
 		}
+	}
+
+	private static void renderCar(PoseStack poseStack, MultiBufferSource buffers, VehicleResource res) {
+		final var manager = Minecraft.getInstance().getResourceManager();
+		for (final VehicleResource.ModelLayer layer : res.models) {
+			if (layer.modelResource == null || layer.modelResource.isEmpty()) {
+				continue; // props-only 层无几何
+			}
+			final BbModelTree tree = BbModelTreeCache.tree(manager, layer.modelResource, layer.propertiesResource);
+			if (tree == null || tree.groupParts.isEmpty()) {
+				continue;
+			}
+			final VertexConsumer vc = buffers.getBuffer(
+					net.minecraft.client.renderer.RenderType.entityCutoutNoCull(
+							BbModelTreeCache.texture(layer.textureResource)));
+
+			final Properties4xLoader.GangwayProperties props =
+					Properties4xLoader.load(manager, layer.propertiesResource);
+			final Map<String, PositionDefinitions4xLoader.PositionGroup> positions =
+					PositionDefinitions4xLoader.load(manager, layer.positionDefinitionsResource);
+
+			for (final Properties4xLoader.PartInfo info : props.parts) {
+				if (!"NORMAL".equals(info.type) || info.positionDefinitionNames.isEmpty()) {
+					continue;
+				}
+				for (final String name : info.names) {
+					final ModelPart anchor = tree.groupParts.get(name);
+					if (anchor == null) {
+						continue;
+					}
+					for (final String defName : info.positionDefinitionNames) {
+						final PositionDefinitions4xLoader.PositionGroup group = positions.get(defName);
+						if (group == null) {
+							continue;
+						}
+						// 预览：门按完全打开取值（time=1）
+						for (final float[] p : group.positions) {
+							drawInstance(poseStack, vc, anchor, info, false, p[0], p[1], p[2]);
+						}
+						for (final float[] p : group.positionsFlipped) {
+							drawInstance(poseStack, vc, anchor, info, true, -p[0], p[1], p[2]);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/** 预览态绘制一次实例（门完全打开） */
+	private static void drawInstance(PoseStack poseStack, VertexConsumer vc, ModelPart anchor,
+			Properties4xLoader.PartInfo info, boolean flipped, float px, float py, float pz) {
+		final DoorAnimation4x anim = DoorAnimation4x.parse(info.doorAnimationType);
+		final float dx = (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)
+				? 0.0F : anim.getDoorAnimationX(info.doorXMultiplier, flipped, 1.0F);
+		final float dz = (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)
+				? 0.0F : anim.getDoorAnimationZ(info.doorZMultiplier, flipped, 1.0F, true);
+		poseStack.pushPose();
+		poseStack.translate((px + dx) / 16.0F, py / 16.0F, (pz + dz) / 16.0F);
+		if (flipped) {
+			poseStack.mulPose(com.mojang.math.Axis.YP.rotation((float) Math.PI));
+		}
+		anchor.render(poseStack, vc, 0xF000F0, OverlayTexture.NO_OVERLAY);
+		poseStack.popPose();
 	}
 }

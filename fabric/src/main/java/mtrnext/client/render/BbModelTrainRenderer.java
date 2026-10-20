@@ -1,307 +1,214 @@
 package mtrnext.client.render;
 
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import mtr.data.TrainClient;
 import mtr.render.TrainRendererBase;
 import mtrnext.MtrNext;
 import mtrnext.pack.VehiclePackLoader;
 import mtrnext.pack.VehicleResource;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.phys.Vec3;
-import org.joml.Matrix4f;
 
-import java.util.List;
+import java.util.Map;
 
 /**
- * [0.29 重构] 4.0 车辆渲染器——bbmodel 自定义盒的逐面绘制。
+ * [0.35 重写] 4.0 车辆渲染器：走 MC 原生 {@code ModelPart} 树绘制。
  * <p>
- * 旧实现走 MC ModelPart bake（per-face UV 语义不兼容, docs/bbox-uv-flaw.md）。
- * 新实现直接用 {@link BbModelLoader.BbBox} 列表 + 底层 quad 绘制：
- * 每面独立 UV、无重叠盒、无 6 倍顶点。门盒按门参数整体 Z 偏移（平滑动画）。
+ * 与旧实现的根本差别——不再手算四边面与 UV，而是让 {@link BbModelTree} 复刻上游的
+ * 构造链（见该类文档），再用 {@code ModelPart.render} 绘制。于是元素旋转、组链层级、
+ * box-UV 布局、inflate、mirror 一次性全部正确，不再逐项打补丁
+ * （旧实现的逐项缺陷见 docs/bbox-uv-flaw.md）。
  * <p>
- * 顶点变换链（与 drawConnectionFace 同基础）：世界矩阵 → 车体平移/旋转 →
- * 盒旋转(origin 欧拉) → quad。
+ * 姿态与门位语义对齐上游 {@code ModelPropertiesPart.renderNormal}（L347-364）：
+ * <ul>
+ *   <li>每个部件按 positionDefinitions 的正位/翻转位<b>各渲染一次</b>；翻转位
+ *       X 取反且 {@code flipped=true}（绕 Y 轴 180°）</li>
+ *   <li>门位移 = 门曲线值（单位像素）经 {@code setPos} 平移，MC 内部自动 /16</li>
+ *   <li>门开度取 host 的 {@code Train.getDoorValue()}，与上游
+ *       {@code persistentVehicleData.getDoorValue()} 同源</li>
+ * </ul>
  */
 public final class BbModelTrainRenderer extends TrainRendererBase {
 
 	private final String trainId;
+	/** 本渲染器对应的列车实例（createTrainInstance 注入；门开度来源） */
+	private final TrainClient train;
 
-	/** [0.29] 门动画状态：每渲染器实例一个（=每列车实例） */
-	private float doorSlide = 0.0F;
-
-	/** 供 TrainTypeBridge 注册使用的公开构造器 */
+	/** 供 TrainTypeBridge 注册使用（无列车上下文，门位移退化为布尔） */
 	public BbModelTrainRenderer(String trainId) {
+		this(trainId, null);
+	}
+
+	private BbModelTrainRenderer(String trainId, TrainClient train) {
 		this.trainId = trainId;
+		this.train = train;
 	}
 
 	@Override
 	public TrainRendererBase createTrainInstance(TrainClient train) {
-		return new BbModelTrainRenderer(trainId);
+		return new BbModelTrainRenderer(trainId, train);
 	}
 
 	@Override
-	public void renderCar(int carNumber, double x, double y, double z, float rotationY, float rotationZ, boolean doorLeftOpen, boolean doorRightOpen) {
+	public void renderCar(int carNumber, double x, double y, double z, float rotationY, float rotationZ,
+			boolean doorLeftOpen, boolean doorRightOpen) {
 		try {
 			final VehicleResource res = VehiclePackLoader.getVehicle(trainId);
 			if (res == null || res.models.isEmpty()) {
 				return;
 			}
-			// [0.29] 门平滑推进（开 0.5/s, 关 0.8/s）
-			final float delta = Minecraft.getInstance().getDeltaFrameTime() / 20.0F;
-			final boolean open = doorLeftOpen || doorRightOpen;
-			if (doorSlide < (open ? 1.0F : 0.0F)) {
-				doorSlide = Math.min(open ? 1.0F : 0.0F, doorSlide + 0.5F * delta);
-			} else if (doorSlide > (open ? 1.0F : 0.0F)) {
-				doorSlide = Math.max(open ? 1.0F : 0.0F, doorSlide - 0.8F * delta);
-			}
-			final float doorOffset = -0.75F * doorSlide;
+
+			final boolean anyDoorOpen = doorLeftOpen || doorRightOpen;
+			final float doorValue = doorValue(anyDoorOpen);
 
 			matrices.pushPose();
 			matrices.translate(x, y, z);
-			matrices.mulPose(com.mojang.math.Axis.YP.rotationDegrees(rotationY));
-			matrices.mulPose(com.mojang.math.Axis.ZP.rotationDegrees(rotationZ));
-			final Matrix4f pose = matrices.last().pose();
+			// 上游 host 契约：先 Y(π + yaw)，再 X(π + pitch)。
+			// renderCar 的 rotationZ 实为 pitch（YMTR 用它判断升降坡，见
+			// JonModelTrainRenderer.renderCar 的 hasPitchAscending/Descending），不是滚转。
+			matrices.mulPose(com.mojang.math.Axis.YP.rotation((float) (Math.PI + rotationY)));
+			matrices.mulPose(com.mojang.math.Axis.XP.rotation((float) (Math.PI + rotationZ)));
 
-			// [0.34] 遍历全部模型层。4.0 的 models[] 是"叠放图层"而非变体互斥：
-			// 实测 ERIDU-DG1000A 头车 5 层 = 1 个 props-only 层（modelResource 空，
-			// 仅承载整车 gangway/barrier 的 properties）+ 车体 + LCD + 驾驶面板 + 高峰,
-			// 各层贴图独立。旧实现只取 models.get(0)，多层车包实际只渲染第 0 层
-			//（5 层丢 4 层）。每层自带贴图 → 各取自己的 RenderType/VertexConsumer，
-			// 缺层跳过不影响其余层。props-only 层由 BbModelLoader.load 的空串
-			// 短路返回空盒表，不会触发 ResourceLocation("") 异常刷屏。
+			final ResourceManager manager = Minecraft.getInstance().getResourceManager();
 			for (final VehicleResource.ModelLayer layer : res.models) {
-				// [0.35] 门动画需要 parts[]（门倍率/动画型），故用双键缓存的
-				// loadAnnotated（模型 + 属性）——同一 bbmodel 可被不同 properties
-				// 引用，单键缓存会串门参数。
-				// [0.35.3] 第三键 = positionDefinitionsResource（位定义 → 镜像展开）。
-				final List<BbModelLoader.BbBox> boxes = BbModelLoader.loadAnnotated(
-						Minecraft.getInstance().getResourceManager(), layer.modelResource, layer.propertiesResource,
-						layer.positionDefinitionsResource);
-				if (boxes == null || boxes.isEmpty()) {
-					continue;
-				}
-				final var vc = vertexConsumers.getBuffer(
-						net.minecraft.client.renderer.RenderType.entityCutoutNoCull(texLocation(layer.textureResource)));
-				for (final BbModelLoader.BbBox box : boxes) {
-					// [0.35] 门部件按上游 DoorAnimationType 曲线位移：
-					// 倍率单位 = Blockbench 像素（16 像素 = 1 格），曲线值
-					// × 倍率后 /16 转格。X 走塞拉门外摆，Z 走滑门滑动。
-					// 非门部件沿用旧的固定 Z 偏移（3.x 语义，无倍率可依）。
-					// [0.35.3] 镜像副本（上游 positionsFlipped）：ERIDU 的
-					// men2/win/door 等顶层组只建 +X 半边，另一侧全靠 flipped
-					// 副本补齐——不画镜像 = 左半侧车门/车窗全无。
-					if (box.mirrorNeeded) {
-						drawMirrorPair(vc, pose, box, doorSlide, open, doorOffset);
-					} else if (box.isAnimatedDoor()) {
-						final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, box.doorFlipped, doorSlide) / 16.0F;
-						final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, box.doorFlipped, doorSlide, open) / 16.0F;
-						drawBoxFaces(vc, pose, box, dx, dz);
-					} else {
-						drawBoxFaces(vc, pose, box, box.isDoor ? doorOffset : 0.0F);
-					}
-				}
+				renderLayer(manager, layer, doorValue, anyDoorOpen);
 			}
+
+			// host 在 TrainRendererBase.applyAverageTransform 里 push 一次，
+			// renderCar 内再 push 一次，收尾必须 pop 两次
+			// （对齐 YMTR JonModelTrainRenderer 的 876/882 两条 popPose）。
+			matrices.popPose();
 			matrices.popPose();
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("bbmodel renderCar failed", t);
 		}
 	}
 
-	/**
-	 * [0.35.3] 绘制一对：本体 + 镜像副本（上游 positionsFlipped 语义）。
-	 * <p>
-	 * 上游镜像粒度 = 整个 modelPart（顶层 outliner 组）：同一份几何渲染两次，
-	 * 第二次绕 Y 轴转 180°（{@code ModelPropertiesPart.java:364}），顶点逐点
-	 * {@code (x,z)→(−x,−z)}（{@code ModelPropertiesPart.addBox} L649-650 同款）。
-	 * <p>
-	 * 门位移：上游 {@code getDoorAnimationX(mult, flipped, t)} 内部用
-	 * {@code copySign(abs, (flipped?-1:1)*mult)}（{@code DoorAnimationType.java}），
-	 * 故镜像副本传 flipped=true 即自动反号。
-	 */
-	static void drawMirrorPair(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
-			BbModelLoader.BbBox box, float doorSlide, boolean open, float doorOffset) {
-		if (box.isAnimatedDoor()) {
-			// 本体：上游 positions 槽 → flipped=false
-			final float dx = box.doorAnim.getDoorAnimationX(box.doorXMult, false, doorSlide) / 16.0F;
-			final float dz = box.doorAnim.getDoorAnimationZ(box.doorZMult, false, doorSlide, open) / 16.0F;
-			drawBoxFaces(vc, pose, box, dx, dz, false);
-			// 镜像副本：上游 positionsFlipped 槽 → flipped=true
-			// （上游 copySign(abs,(flipped?-1:1)*mult) 自动反号）
-			final float mdx = box.doorAnim.getDoorAnimationX(box.doorXMult, true, doorSlide) / 16.0F;
-			final float mdz = box.doorAnim.getDoorAnimationZ(box.doorZMult, true, doorSlide, open) / 16.0F;
-			drawBoxFaces(vc, pose, box, mdx, mdz, true);
-		} else {
-			final float dz = box.isDoor ? doorOffset : 0.0F;
-			drawBoxFaces(vc, pose, box, 0.0F, dz, false);
-			drawBoxFaces(vc, pose, box, 0.0F, dz, true);
+	private void renderLayer(ResourceManager manager, VehicleResource.ModelLayer layer,
+			float doorValue, boolean doorsOpen) {
+		if (layer.modelResource == null || layer.modelResource.isEmpty()) {
+			return; // props-only 层：只承载 gangway/barrier 参数，无几何
+		}
+		final BbModelTree tree = BbModelTreeCache.tree(manager, layer.modelResource, layer.propertiesResource);
+		if (tree == null || tree.elements.isEmpty()) {
+			return;
+		}
+
+		final VertexConsumer vc = vertexConsumers.getBuffer(
+				RenderType.entityCutoutNoCull(BbModelTreeCache.texture(layer.textureResource)));
+
+		final Properties4xLoader.GangwayProperties props =
+				Properties4xLoader.load(manager, layer.propertiesResource);
+		// positionDefinitions：部件名（= 顶层组名）→ 正位 / 翻转位
+		final Map<String, PositionDefinitions4xLoader.PositionGroup> positions =
+				PositionDefinitions4xLoader.load(manager, layer.positionDefinitionsResource);
+
+		// 上游 renderNormal 的粒度是「部件记录 × 位置实例」：
+		// properties.parts[] 每条记录按自己的 names 取锚点节点，再对每个位置
+		// 渲染一次。因此同一组可被多条记录引用（ERIDU 的 men2 就有两条：
+		// 一条 +11 只走正位、一条 −11 只走翻转位），按组名折叠会丢掉一条。
+		for (final Properties4xLoader.PartInfo info : props.parts) {
+			if (!"NORMAL".equals(info.type)) {
+				continue; // DISPLAY/FLOOR/DOORWAY 不参与常规几何渲染
+			}
+			if (info.positionDefinitionNames.isEmpty()) {
+				continue; // 上游 getPositionDefinition 未被调用 → 该记录不产出几何
+			}
+			for (final String name : info.names) {
+				final ModelPart anchor = tree.groupParts.get(name);
+				if (anchor == null) {
+					continue;
+				}
+				for (final String defName : info.positionDefinitionNames) {
+					final PositionDefinitions4xLoader.PositionGroup group = positions.get(defName);
+					if (group == null) {
+						continue;
+					}
+					for (final float[] p : group.positions) {
+						drawInstance(anchor, vc, info, false, p[0], p[1], p[2], doorValue, doorsOpen);
+					}
+					for (final float[] p : group.positionsFlipped) {
+						drawInstance(anchor, vc, info, true, -p[0], p[1], p[2], doorValue, doorsOpen);
+					}
+				}
+			}
 		}
 	}
 
-	/** 逐面绘制一盒六面（每面独立 bbmodel UV；缺 UV 面跳过）。
-	 * [0.30] winding 核对：从外部看每面取逆时针序（MC 正面规则）。
-	 * 北面(Z-)、南面(Z+)、西面(X-)已对；东面(X+)原序为顺时针(从 -X 看)
-	 * → 交换对角顶点修正为从 +X 看逆时针。down/up 双面各按地面/顶视
-	 * 观察方向逆时针。UV 对应随顶点交换同步调整。
-	 * 与 FormationPreviewRenderer 共享此方法，避免两处 winding 逻辑分道扬镳。
-	 * [0.35.2] {@code flipTextureV} 语义已按上游定论：上游 VehicleModel.createModel
-	 * 只把它传给 .obj/.mqo 路径（ModelResourceLoader.loadModel），bbmodel 路径
-	 * （DynamicVehicleModel 的 BlockbenchModel 构造器）完全不接收——即上游对
-	 * bbmodel 同样不消费该字段（Blockbench 导出的 UV 原点本就与 MC 一致，
-	 * 无需翻转）。mtr-next 不实装该字段 = 与上游行为一致，非遗漏。 */
-	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dz) {
-		drawBoxFaces(vc, pose, box, 0.0F, dz);
-	}
-
 	/**
-	 * [0.35] 逐面绘制一盒六面，支持 X/Z 双轴位移（门动画的横向外摆 + 纵向滑动）。
+	 * 绘制一次实例，对齐上游
+	 * {@code modelPart.render(graphicsHolder, x, y, z, flipped ? π : 0, light, overlay)}
+	 * （{@code ModelPropertiesPart.java:364}）。
+	 * <p>
+	 * 渲染对象是<b>组锚点节点</b>（上游 {@code nameToPart} 的 ModelPartExtension），
+	 * 故门位移移动整个顶层组，与上游一致。
 	 *
-	 * @param dx X 轴位移（格）。塞拉门（PLUG_*）沿 X 外摆，非塞拉门为 0。
-	 * @param dz Z 轴位移（格）。滑门沿车长方向滑动。
+	 * @param flipped 上游 positionsFlipped 槽：绕 Y 轴 180°
+	 * @param px      位定义 X 偏移（像素，翻转位已取反）
 	 */
-	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose, BbModelLoader.BbBox box, float dx, float dz) {
-		drawBoxFaces(vc, pose, box, dx, dz, false);
+	private void drawInstance(ModelPart anchor, VertexConsumer vc, Properties4xLoader.PartInfo info,
+			boolean flipped, float px, float py, float pz, float doorValue, boolean doorsOpen) {
+		final float[] door = doorOffsetPixels(info, flipped, doorValue, doorsOpen);
+		matrices.pushPose();
+		// 位移统一按像素给出，这里一次性转格
+		matrices.translate((px + door[0]) / 16.0F, py / 16.0F, (pz + door[1]) / 16.0F);
+		if (flipped) {
+			matrices.mulPose(com.mojang.math.Axis.YP.rotation((float) Math.PI));
+		}
+		anchor.render(matrices, vc, 0xF000F0, OverlayTexture.NO_OVERLAY);
+		matrices.popPose();
 	}
 
 	/**
-	 * [0.35.3] 逐面绘制一盒六面，支持 X/Z 双轴位移 + 镜像副本。
+	 * 门位移（像素）：上游
+	 * {@code partDetails.x + doorAnimationType.getDoorAnimationX(doorXMultiplier, partDetails.flipped, time)}
+	 * 与 {@code getInterpolatedDoorValue(..., doorZMultiplier, partDetails.flipped, ...)}。
 	 * <p>
-	 * 镜像语义（上游）：{@code partDetails.flipped ? Math.PI : 0} 绕 Y 轴转 180°
-	 * （{@code ModelPropertiesPart.java:364}）——刚体旋转保定向，故顶点逐点
-	 * {@code (x,z)→(−x,−z)}，且每面的绕向（winding）需同步反转，否则法线朝内。
-	 * <p>
-	 * UV 不变（跟着面走），与上游刚体旋转一致。
-	 *
-	 * @param mirror true = 画镜像副本（上游 flipped 位）
+	 * {@code flipped} 传入曲线后由内部的 {@code copySign} 自动反号，
+	 * 因此镜像侧无需另算符号。
 	 */
-	static void drawBoxFaces(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
-			BbModelLoader.BbBox box, float dx, float dz, boolean mirror) {
-		// bbmodel Y 向下 → MC Y 向上的翻转由 from/to 交换 y 实现
-		final float y1 = -box.y2, y2 = -box.y1;
-		// 门位移：整盒平移（顶点 + 偏移量）
-		float x1 = box.x1 + dx, x2 = box.x2 + dx;
-		float z1 = box.z1 + dz, z2 = box.z2 + dz;
-		if (mirror) {
-			// 绕 Y 轴 π：x、z 同时取反
-			x1 = -x1;
-			x2 = -x2;
-			z1 = -z1;
-			z2 = -z2;
+	private static float[] doorOffsetPixels(Properties4xLoader.PartInfo info, boolean flipped,
+			float doorValue, boolean doorsOpen) {
+		if (info == null || (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)) {
+			return ZERO;
 		}
-
-		if (box.uvDown != null) {
-			// down 面：从下方看逆时针
-			if (mirror) {
-				quad(vc, pose,
-						x1, y2, z1, x2, y2, z1, x2, y2, z2, x1, y2, z2,
-						box.uvDown, box.uvScaleU, box.uvScaleV);
-			} else {
-				quad(vc, pose,
-						x1, y2, z2, x2, y2, z2, x2, y2, z1, x1, y2, z1,
-						box.uvDown, box.uvScaleU, box.uvScaleV);
-			}
-		}
-		if (box.uvUp != null) {
-			// up 面：从上方看逆时针
-			if (mirror) {
-				quad(vc, pose,
-						x1, y1, z2, x2, y1, z2, x2, y1, z1, x1, y1, z1,
-						box.uvUp, box.uvScaleU, box.uvScaleV);
-			} else {
-				quad(vc, pose,
-						x1, y1, z1, x2, y1, z1, x2, y1, z2, x1, y1, z2,
-						box.uvUp, box.uvScaleU, box.uvScaleV);
-			}
-		}
-		if (box.uvNorth != null) {
-			// north (Z-)：从 -Z 方向看逆时针
-			if (mirror) {
-				quad(vc, pose,
-						x1, y2, z2, x2, y2, z2, x2, y1, z2, x1, y1, z2,
-						box.uvNorth, box.uvScaleU, box.uvScaleV);
-			} else {
-				quad(vc, pose,
-						x1, y2, z1, x2, y2, z1, x2, y1, z1, x1, y1, z1,
-						box.uvNorth, box.uvScaleU, box.uvScaleV);
-			}
-		}
-		if (box.uvSouth != null) {
-			// south (Z+)：从 +Z 方向看逆时针
-			if (mirror) {
-				quad(vc, pose,
-						x1, y1, z1, x2, y1, z1, x2, y2, z1, x1, y2, z1,
-						box.uvSouth, box.uvScaleU, box.uvScaleV);
-			} else {
-				quad(vc, pose,
-						x1, y1, z2, x2, y1, z2, x2, y2, z2, x1, y2, z2,
-						box.uvSouth, box.uvScaleU, box.uvScaleV);
-			}
-		}
-		if (box.uvEast != null) {
-			// east (X+)：从 +X 方向看逆时针
-			if (mirror) {
-				// 镜像后原 east 面落在 west 侧，绕向随旋转翻转
-				quad(vc, pose,
-						x1, y1, z1, x1, y1, z2, x1, y2, z2, x1, y2, z1,
-						box.uvEast, box.uvScaleU, box.uvScaleV);
-			} else {
-				quad(vc, pose,
-						x2, y1, z2, x2, y1, z1, x2, y2, z1, x2, y2, z2,
-						box.uvEast, box.uvScaleU, box.uvScaleV);
-			}
-		}
-		if (box.uvWest != null) {
-			// west (X-)：从 -X 方向看逆时针
-			if (mirror) {
-				quad(vc, pose,
-						x2, y1, z2, x2, y1, z1, x2, y2, z1, x2, y2, z2,
-						box.uvWest, box.uvScaleU, box.uvScaleV);
-			} else {
-				quad(vc, pose,
-						x1, y1, z1, x1, y1, z2, x1, y2, z2, x1, y2, z1,
-						box.uvWest, box.uvScaleU, box.uvScaleV);
-			}
-		}
+		final DoorAnimation4x anim = DoorAnimation4x.parse(info.doorAnimationType);
+		final float time = doorsOpen ? doorValue : 0.0F;
+		return new float[]{
+				anim.getDoorAnimationX(info.doorXMultiplier, flipped, time),
+				anim.getDoorAnimationZ(info.doorZMultiplier, flipped, time, doorsOpen)
+		};
 	}
 
-	/** 一面 quad：bbmodel UV 归一化到贴图（u1,v1,u2,v2 → 0~1）
-	 * [0.30] 参数表随 winding 修正同步：v 分量按"y 大 = v 小"（贴图 V 向下）
-	 * [0.35] 归一化除数改为 per-box 的 bbmodel resolution（1/resW、1/resH）——
-	 * 旧实现硬编码 24（MC 方块贴图边长），对 bbmodel 完全错误：实测 ERIDU
-	 * 四个模型 resolution 为 512/128/24/64，除 24 会让 UV 越界（车体
-	 * maxU=384 > 24）→ 贴图错位。resolution 由 BbModelLoader 解析层给出。
-	 */
-	static void quad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
-			float ax, float ay, float az, float bx, float by, float bz,
-			float cx, float cy, float cz, float dx, float dy, float dz,
-			float[] uv, float scaleU, float scaleV) {
-		final float u1 = uv[0] * scaleU, v1 = uv[1] * scaleV, u2 = uv[2] * scaleU, v2 = uv[3] * scaleV;
-		vc.vertex(pose, ax, ay, az).color(255, 255, 255, 255).uv(u1, v2).endVertex();
-		vc.vertex(pose, bx, by, bz).color(255, 255, 255, 255).uv(u2, v2).endVertex();
-		vc.vertex(pose, cx, cy, cz).color(255, 255, 255, 255).uv(u2, v1).endVertex();
-		vc.vertex(pose, dx, dy, dz).color(255, 255, 255, 255).uv(u1, v1).endVertex();
+	private static final float[] ZERO = {0.0F, 0.0F};
+
+	/** host 门开度；拿不到时按布尔退化 */
+	private float doorValue(boolean anyDoorOpen) {
+		try {
+			if (train != null) {
+				return Math.abs(train.getDoorValue());
+			}
+		} catch (final Throwable ignored) {
+			// 退化到布尔
+		}
+		return anyDoorOpen ? 1.0F : 0.0F;
 	}
 
 	@Override
-	public void renderConnection(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ, Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip, double y, double width, double height, float angleX, float angleZ) {
-		// [0.7] 贯通道程序化渲染：properties_*.json 的 gangway 贴图 + 高度
+	public void renderConnection(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ, Vec3 fromXFlip, Vec3 fromZFlip,
+			Vec3 toXFlip, Vec3 toZFlip, double y, double width, double height, float angleX, float angleZ) {
 		try {
-			final VehicleResource res = VehiclePackLoader.getVehicle(trainId);
-			if (res == null || res.models.isEmpty()) {
+			final Properties4xLoader.GangwayProperties props = gangwayProperties();
+			if (props == null) {
 				return;
 			}
-			// 贯通道/端墙属性是"每车"而非"每层"语义（4.0 properties_*.json
-			// 描述整车 gangway/barrier），故只读第 0 层的 propertiesResource——
-			// 与上面的多模型层循环不同，这里不是遗漏。
-			final VehicleResource.ModelLayer layer = res.models.get(0);
-			if (layer.propertiesResource.isEmpty()) {
-				return;
-			}
-			final Properties4xLoader.GangwayProperties props =
-					Properties4xLoader.load(Minecraft.getInstance().getResourceManager(), layer.propertiesResource);
 			drawConnectionFace(fromX, fromZ, toX, toZ, fromXFlip, fromZFlip, toXFlip, toZFlip,
-					y, angleX, angleZ,
-					props.gangwayInnerSide, props.gangwayHeight);
-			// [0.9.2] 顶/底封板
+					y, props.gangwayInnerSide, props.gangwayHeight);
 			drawConnectionCap(fromX, fromZ, toX, toZ, y, props.gangwayInnerTop);
 			drawConnectionCap(fromXFlip, fromZFlip, toXFlip, toZFlip, y, props.gangwayInnerTop);
 			drawConnectionCap(fromX, toX, fromZ, toZ, y - props.gangwayHeight, props.gangwayInnerBottom);
@@ -311,51 +218,52 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	}
 
 	@Override
-	public void renderBarrier(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ, Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip, double y, double width, double height, float angleX, float angleZ) {
-		// [0.7] 端墙程序化渲染
+	public void renderBarrier(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ, Vec3 fromXFlip, Vec3 fromZFlip,
+			Vec3 toXFlip, Vec3 toZFlip, double y, double width, double height, float angleX, float angleZ) {
 		try {
-			final VehicleResource res = VehiclePackLoader.getVehicle(trainId);
-			if (res == null || res.models.isEmpty()) {
+			final Properties4xLoader.GangwayProperties props = gangwayProperties();
+			if (props == null) {
 				return;
 			}
-			// 同 renderConnection：端墙属性按"每车"取，固定第 0 层
-			final VehicleResource.ModelLayer layer = res.models.get(0);
-			if (layer.propertiesResource.isEmpty()) {
-				return;
-			}
-			final Properties4xLoader.GangwayProperties props =
-					Properties4xLoader.load(Minecraft.getInstance().getResourceManager(), layer.propertiesResource);
 			drawConnectionFace(fromX, fromZ, toX, toZ, fromXFlip, fromZFlip, toXFlip, toZFlip,
-					y, angleX, angleZ,
-					props.barrierInnerSide, props.barrierHeight);
+					y, props.barrierInnerSide, props.barrierHeight);
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("renderBarrier failed", t);
 		}
 	}
 
-	/**
-	 * 连接面侧面贴图带（正/反两条）
-	 */
+	/** 贯通道/端墙属性按"每车"语义取第 0 层（不是遗漏，见 properties_*.json 结构） */
+	private Properties4xLoader.GangwayProperties gangwayProperties() {
+		final VehicleResource res = VehiclePackLoader.getVehicle(trainId);
+		if (res == null || res.models.isEmpty()) {
+			return null;
+		}
+		final VehicleResource.ModelLayer layer = res.models.get(0);
+		if (layer.propertiesResource == null || layer.propertiesResource.isEmpty()) {
+			return null;
+		}
+		return Properties4xLoader.load(Minecraft.getInstance().getResourceManager(), layer.propertiesResource);
+	}
+
 	private void drawConnectionFace(Vec3 fromX, Vec3 fromZ, Vec3 toX, Vec3 toZ,
 			Vec3 fromXFlip, Vec3 fromZFlip, Vec3 toXFlip, Vec3 toZFlip,
-			double y, float angleX, float angleZ, String sideTex, float faceHeight) {
+			double y, String sideTex, float faceHeight) {
 		if (sideTex == null || sideTex.isEmpty()) {
 			return;
 		}
-		final var vc = vertexConsumers.getBuffer(
-				net.minecraft.client.renderer.RenderType.entityCutoutNoCull(texLocation(sideTex)));
+		final VertexConsumer vc = vertexConsumers.getBuffer(
+				RenderType.entityCutoutNoCull(texLocation(sideTex)));
 		final var pose = matrices.last().pose();
 		connectionQuad(vc, pose, fromX, toZ, y, faceHeight);
 		connectionQuad(vc, pose, fromXFlip, toZFlip, y, faceHeight);
 	}
 
-	/** [0.9.2] 顶/底横面：车端连接面的水平封板 */
 	private void drawConnectionCap(Vec3 a, Vec3 b, Vec3 c, Vec3 d, double capY, String capTex) {
 		if (capTex == null || capTex.isEmpty()) {
 			return;
 		}
-		final var vc = vertexConsumers.getBuffer(
-				net.minecraft.client.renderer.RenderType.entityCutoutNoCull(texLocation(capTex)));
+		final VertexConsumer vc = vertexConsumers.getBuffer(
+				RenderType.entityCutoutNoCull(texLocation(capTex)));
 		final var pose = matrices.last().pose();
 		vc.vertex(pose, (float) a.x, (float) capY, (float) a.z).color(255, 255, 255, 255).uv(0, 0).endVertex();
 		vc.vertex(pose, (float) b.x, (float) capY, (float) b.z).color(255, 255, 255, 255).uv(1, 0).endVertex();
@@ -363,7 +271,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		vc.vertex(pose, (float) d.x, (float) capY, (float) d.z).color(255, 255, 255, 255).uv(0, 1).endVertex();
 	}
 
-	private void connectionQuad(com.mojang.blaze3d.vertex.VertexConsumer vc, Matrix4f pose,
+	private void connectionQuad(VertexConsumer vc, org.joml.Matrix4f pose,
 			Vec3 left, Vec3 right, double topY, double h) {
 		final float lx = (float) left.x, lz = (float) left.z;
 		final float rx = (float) right.x, rz = (float) right.z;
@@ -374,15 +282,8 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		vc.vertex(pose, lx, (float) topY, lz).color(255, 255, 255, 255).uv(0, 0).endVertex();
 	}
 
-	/** 车包贴图字符串 → ResourceLocation（供本类与 FormationPreviewRenderer 共用）。
-	 * 缺省/空回退白色混凝土，避免 entityCutoutNoCull 拿到空贴图。 */
+	/** 车包贴图字符串 → ResourceLocation（供本类与 FormationPreviewRenderer 共用） */
 	static ResourceLocation texLocation(String resource) {
-		if (resource == null || resource.isEmpty()) {
-			return new ResourceLocation("minecraft", "textures/block/white_concrete.png");
-		}
-		final String[] parts = resource.split(":", 2);
-		return parts.length == 2
-				? new ResourceLocation(parts[0], parts[1])
-				: new ResourceLocation("minecraft", parts[0]);
+		return BbModelTreeCache.texture(resource);
 	}
 }
