@@ -111,9 +111,10 @@ public final class Properties4xLoader {
 	 * parts[].names 匹配 bbmodel <b>outliner 分组名</b>（非 element.name——
 	 * element.name 全是 cube/cude，门信息根本不在那里）。
 	 * <p>
-	 * <b>只解析不消费</b>：倍率→位移的换算单位（像素/格）与左右符号约定
-	 * 尚未经 MTR 4.x 上游确认（docs/door-animation-audit.md §4），渲染端
-	 * 接入被有意推迟——先让数据面可回归测试。
+	 * [0.36.0 起] 倍率→位移的换算单位（像素/格）与左右符号约定**已由上游源码确证**
+	 * （docs/door-animation-audit.md §五f/§五g），本层数据已被
+	 * {@code BbModelTrainRenderer} 消费：门倍率→曲线位移、时序窗口→是否渲染、
+	 * 闪烁→y 推离视野。上游快照见 {@code docs/_upstream/DoorAnimationType.java}。
 	 * <p>
 	 * public 是为离线自测（ParserSelfTest）可直接喂 JSON，无需 ResourceManager。
 	 */
