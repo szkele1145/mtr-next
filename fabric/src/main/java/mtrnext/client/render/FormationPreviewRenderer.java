@@ -66,13 +66,15 @@ public final class FormationPreviewRenderer {
 			if (layer.modelResource == null || layer.modelResource.isEmpty()) {
 				continue; // props-only 层无几何
 			}
-			final BbModelTree tree = BbModelTreeCache.tree(manager, layer.modelResource, layer.propertiesResource);
+			// [0.36.9] 用 ModelLayer 预计算的缓存键 / 预解析的 ResourceLocation
+			final BbModelTree tree = BbModelTreeCache.tree(manager, layer.modelResource, layer.propertiesResource,
+					layer.treeCacheKey);
 			if (tree == null || tree.groupParts.isEmpty()) {
 				continue;
 			}
 			final VertexConsumer vc = buffers.getBuffer(
 					net.minecraft.client.renderer.RenderType.entityCutoutNoCull(
-							BbModelTreeCache.texture(layer.textureResource)));
+							BbModelTreeCache.texture(layer.textureLocation)));
 
 			final Properties4xLoader.GangwayProperties props =
 					Properties4xLoader.load(manager, layer.propertiesResource);

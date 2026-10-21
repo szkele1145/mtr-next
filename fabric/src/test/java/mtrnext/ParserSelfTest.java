@@ -36,6 +36,7 @@ public final class ParserSelfTest {
 		testBbModelScaleAndUv();
 		testDoorAnimationPreparse();
 		testDoorOpeningDirection();
+		testTreeCacheKeyPrecompute();
 		testUpstreamBoxRotation();
 		testDoorAnnotation();
 		testDoorOverlapDetection();
@@ -160,6 +161,50 @@ public final class ParserSelfTest {
 		final float openingValue = 0.80F;
 		check("门开度回升 → 开门中",
 				mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(openingValue, 0.30F));
+	}
+
+	/**
+	 * [0.36.9] 模型树缓存键的**预计算一致性**回归。
+	 * <p>
+	 * 改动：把「渲染热路径每帧拼一次 {@code modelResource + "|" + propertiesResource}」
+	 * 提到<b>加载期</b>（{@code ModelLayer.treeCacheKey} 预计算字段）。
+	 * <p>
+	 * ★ 正确性关键：预计算键必须与<b>旧算法逐字相同</b>，
+	 * 否则缓存命中会错 ⇒ 拿到**别的 properties 组合的模型树**
+	 * （上游 {@code DynamicVehicleModel} 把 properties 的 {@code modelYOffset}
+	 * 传进每个元素，单键缓存会让不同车包串偏移）。
+	 * <p>
+	 * 本测试把「旧算法」写成字面量（不调用被测代码），
+	 * 再与 {@code ModelLayer.treeCacheKey(...)} 逐字比对。
+	 */
+	private static void testTreeCacheKeyPrecompute() {
+		System.out.println("[模型树缓存键预计算一致性]");
+
+		final String[][] cases = {
+				{"mtr:eridudanguei.bbmodel", "mtr:properties_1fa88c30.json"},
+				{"mtr:a.bbmodel", ""},
+				{"mtr:a.bbmodel", null},
+				{null, "mtr:p.json"},
+				{null, null},
+				{"", ""},
+		};
+		for (final String[] c : cases) {
+			// 旧算法（原 BbModelTreeCache.tree 里的写法，逐字照抄）
+			final String legacy = (c[0] == null ? "" : c[0]) + "|" + (c[1] == null ? "" : c[1]);
+			final String precomputed = mtrnext.pack.VehicleResource.ModelLayer.treeCacheKey(c[0], c[1]);
+			check("缓存键与旧算法逐字一致: [" + c[0] + "|" + c[1] + "]",
+					legacy.equals(precomputed));
+		}
+
+		// 预计算值必须是稳定的（同一输入两次调用结果相同）
+		final String a = mtrnext.pack.VehicleResource.ModelLayer.treeCacheKey("mtr:x.bbmodel", "mtr:y.json");
+		final String b = mtrnext.pack.VehicleResource.ModelLayer.treeCacheKey("mtr:x.bbmodel", "mtr:y.json");
+		check("缓存键稳定（同输入同输出）", a.equals(b));
+
+		// 不同 properties 必须得到不同键（否则会串 modelYOffset）
+		final String k1 = mtrnext.pack.VehicleResource.ModelLayer.treeCacheKey("mtr:x.bbmodel", "mtr:y1.json");
+		final String k2 = mtrnext.pack.VehicleResource.ModelLayer.treeCacheKey("mtr:x.bbmodel", "mtr:y2.json");
+		check("不同 properties ⇒ 不同缓存键（防串 modelYOffset）", !k1.equals(k2));
 	}
 
 	/**

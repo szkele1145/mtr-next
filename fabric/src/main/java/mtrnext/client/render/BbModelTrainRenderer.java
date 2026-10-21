@@ -140,13 +140,16 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		if (layer.modelResource == null || layer.modelResource.isEmpty()) {
 			return; // props-only 层：只承载 gangway/barrier 参数，无几何
 		}
-		final BbModelTree tree = BbModelTreeCache.tree(manager, layer.modelResource, layer.propertiesResource);
+		// [0.36.9] 用 ModelLayer 预计算的缓存键（原先每帧每层拼一次字符串）
+		final BbModelTree tree = BbModelTreeCache.tree(manager, layer.modelResource, layer.propertiesResource,
+				layer.treeCacheKey);
 		if (tree == null || tree.elements.isEmpty()) {
 			return;
 		}
 
+		// [0.36.9] 用 ModelLayer 预解析的 ResourceLocation（原先每帧每层 new 一次）
 		final VertexConsumer vc = vertexConsumers.getBuffer(
-				RenderType.entityCutoutNoCull(BbModelTreeCache.texture(layer.textureResource)));
+				RenderType.entityCutoutNoCull(BbModelTreeCache.texture(layer.textureLocation)));
 
 		final Properties4xLoader.GangwayProperties props =
 				Properties4xLoader.load(manager, layer.propertiesResource);
@@ -218,12 +221,13 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	private void drawInstance(ModelPart anchor, VertexConsumer vc, Properties4xLoader.PartInfo info,
 			boolean flipped, float px, float py, float pz, float doorValue, boolean opening,
 			boolean shouldRender, boolean flashOn) {
-		final float[] door = doorOffsetPixels(info, flipped, doorValue, opening);
+		// [0.36.9] 门位移改写入**可复用缓冲区**（原先每次调用 new 一个 float[2]）
+		doorOffsetPixels(info, flipped, doorValue, opening);
 		matrices.pushPose();
 		// 位移统一按像素给出，这里一次性转格
-		float ox = (px + door[0]) / 16.0F;
+		float ox = (px + doorOffsetX) / 16.0F;
 		float oy = py / 16.0F;
-		float oz = (pz + door[1]) / 16.0F;
+		float oz = (pz + doorOffsetZ) / 16.0F;
 		if (!shouldRender) {
 			ox = Integer.MAX_VALUE;
 			oz = Integer.MAX_VALUE;
@@ -259,10 +263,12 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 *
 	 * @param opening 上游语义：门<b>运动方向</b>（true = 开门中，false = 关门中）
 	 */
-	private float[] doorOffsetPixels(Properties4xLoader.PartInfo info, boolean flipped,
+	private void doorOffsetPixels(Properties4xLoader.PartInfo info, boolean flipped,
 			float doorValue, boolean opening) {
 		if (info == null || (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)) {
-			return ZERO;
+			doorOffsetX = 0.0F;
+			doorOffsetZ = 0.0F;
+			return;
 		}
 		// [0.36.7] 用加载期预解析的枚举（原先每帧每部件重新 parse 字符串）
 		final DoorAnimation4x anim = info.doorAnimation;
@@ -274,10 +280,20 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		final DoorMovementInterpolation interpolation =
 				doorInterpolations.computeIfAbsent(key, k -> new DoorMovementInterpolation());
 		final float dz = interpolation.setAndGet(rawZ, opening);
-		return new float[]{dx, dz};
+		doorOffsetX = dx;
+		doorOffsetZ = dz;
 	}
 
-	private static final float[] ZERO = {0.0F, 0.0F};
+	/**
+	 * [0.36.9] 门位移的 X / Z 分量（像素）——<b>可复用输出缓冲</b>。
+	 * <p>
+	 * 原先 {@code doorOffsetPixels} 每次调用 {@code new float[2]} 返回结果，
+	 * 每帧每渲染实例一次 ⇒ 每秒数千次短命数组分配（GC 压力）。
+	 * 改为主动写出两个分量，调用方（{@code drawInstance}）立即读取，
+	 * 期间不跨调用 ⇒ 无并发/重入问题（{@code drawInstance} 不递归）。
+	 */
+	private float doorOffsetX;
+	private float doorOffsetZ;
 
 	/**
 	 * [0.36.8] 门运动方向（上游 {@code opening} 语义）。

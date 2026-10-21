@@ -221,6 +221,25 @@ public final class VehicleResource {
 		/** [0.35.3] definition_*.json 原始资源路径（位定义内容，镜像展开的依据） */
 		public final String positionDefinitionsResource;
 		final List<String> positionDefinitionNames;
+		/**
+		 * [0.36.9] 模型树缓存键（{@code modelResource + "|" + propertiesResource}）——<b>预计算</b>。
+		 * <p>
+		 * 原先在渲染热路径里每帧每模型层做一次字符串拼接 ⇒ 每帧产生一个临时
+		 * {@code String}（含 {@code StringBuilder} 内部 char[] 拷贝）。
+		 * 一列车多层、每层每帧 ⇒ 每秒数千次无谓分配。
+		 * <p>
+		 * 键格式必须与 {@code BbModelTreeCache.tree(...)} 的算法**逐字一致** ——
+		 * 两处都调 {@link #treeCacheKey(String, String)}，避免各写一份。
+		 */
+		public final String treeCacheKey;
+		/**
+		 * [0.36.9] 贴图 {@code ResourceLocation} ——<b>预计算</b>。
+		 * <p>
+		 * 原先每帧每模型层 {@code new ResourceLocation(...)} 一次。
+		 * 贴图资源在车包生命周期内不变 ⇒ 构造时算一次即可。
+		 * 解析失败（畸形资源串）时为 null，由渲染端回退到白色混凝土。
+		 */
+		public final net.minecraft.resources.ResourceLocation textureLocation;
 
 		private ModelLayer(String model, String texture, String properties, boolean flipV, String posDefResource, List<String> posDefs) {
 			this.modelResource = model;
@@ -229,6 +248,35 @@ public final class VehicleResource {
 			this.flipTextureV = flipV;
 			this.positionDefinitionsResource = posDefResource;
 			this.positionDefinitionNames = posDefs;
+			// [0.36.9] 预计算渲染热路径用的两个常量
+			this.treeCacheKey = treeCacheKey(model, properties);
+			this.textureLocation = resolveLocation(texture);
+		}
+
+		/**
+		 * [0.36.9] 模型树缓存键的**唯一**算法（渲染端与加载端共用）。
+		 * <p>
+		 * 约定：{@code modelResource} 为空 → 空串（该层不参与几何渲染）；
+		 * {@code propertiesResource} 为 null → 空串。
+		 */
+		public static String treeCacheKey(String modelResource, String propertiesResource) {
+			return (modelResource == null ? "" : modelResource) + "|"
+					+ (propertiesResource == null ? "" : propertiesResource);
+		}
+
+		/** [0.36.9] 资源串 → {@code ResourceLocation}；畸形串返回 null（不抛异常） */
+		private static net.minecraft.resources.ResourceLocation resolveLocation(String resource) {
+			if (resource == null || resource.isEmpty()) {
+				return null;
+			}
+			try {
+				final String[] parts = resource.split(":", 2);
+				return parts.length == 2
+						? new net.minecraft.resources.ResourceLocation(parts[0], parts[1])
+						: new net.minecraft.resources.ResourceLocation("minecraft", parts[0]);
+			} catch (final Throwable ignored) {
+				return null;
+			}
 		}
 
 		static ModelLayer fromJson(JsonObject o, ResourceManager manager) {
