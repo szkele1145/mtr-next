@@ -35,6 +35,7 @@ public final class ParserSelfTest {
 		testDoorAnimation4x();
 		testBbModelScaleAndUv();
 		testDoorAnimationPreparse();
+		testDoorOpeningDirection();
 		testUpstreamBoxRotation();
 		testDoorAnnotation();
 		testDoorOverlapDetection();
@@ -99,6 +100,66 @@ public final class ParserSelfTest {
 				json("{\"parts\":\"oops\"}")).isEmpty());
 		check("names 非数组忽略 -> 部件仍创建", mtrnext.client.render.Properties4xLoader.parseParts(
 				json("{\"parts\":[{\"names\":\"notarray\"}]}")).size() == 1);
+	}
+
+	/**
+	 * [0.36.8] 门运动方向（{@code opening}）的多车厢回归。
+	 * <p>
+	 * ★ 这里锁定的是一个<b>真 bug</b>：原实现在 {@code renderCar} 里直接做
+	 * {@code doorValue >= previousDoorValue}，而 {@code renderCar} 是<b>每车厢</b>调一次、
+	 * {@code previousDoorValue} 却只有<b>每列车</b>一份
+	 * ⇒ 第 2 辆车厢读到的已是第 1 辆车厢刚写回的<b>同一个</b>门开度
+	 * ⇒ 判定恒为 true ⇒ <b>关门时也被当成开门中</b>
+	 * ⇒ 关门时段的门时序窗口失效 + Z 位移走错曲线分支。
+	 * <p>
+	 * 修法：优先用 YMTR 的车辆级 {@code TrainClient.isDoorOpening()}；
+	 * 回退路径用<b>帧标记</b>保证一帧只更新一次。
+	 * <p>
+	 * 本测试用纯函数 {@code fallbackOpening(current, previous)} 验证比较语义，
+	 * 并用「模拟一帧内多车厢」的序列验证<b>同帧内 opening 保持一致</b>。
+	 */
+	private static void testDoorOpeningDirection() {
+		System.out.println("[门运动方向 opening（多车厢回归）]");
+
+		// --- 比较语义本身 ---
+		check("门开度上升 → 开门中",
+				mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(0.5F, 0.2F));
+		check("门开度下降 → 关门中",
+				!mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(0.2F, 0.5F));
+		check("门开度不变 → 开门中（与 YMTR 的 > 判定方向一致时为 true；"
+				+ "这里保持 >= 语义不变）",
+				mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(0.5F, 0.5F));
+
+		// --- 模拟一帧内连续渲染 3 个车厢 ---
+		// 旧实现：每车厢写回 previousDoorValue ⇒ 第 2、3 个车厢必然判成「开门中」
+		// 新实现：同帧内 opening 固定，只在帧首更新一次
+		final float closingDoorValue = 0.30F;  // 正在关门（比上一帧 0.60 小）
+		final float previousFrameValue = 0.60F;
+
+		// 旧实现的错误序列（复现 bug）
+		float legacyPrevious = previousFrameValue;
+		final boolean legacyCar0 = mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(closingDoorValue, legacyPrevious);
+		legacyPrevious = closingDoorValue;
+		final boolean legacyCar1 = mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(closingDoorValue, legacyPrevious);
+		legacyPrevious = closingDoorValue;
+		final boolean legacyCar2 = mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(closingDoorValue, legacyPrevious);
+		check("★ 旧实现复现：第 2 辆车厢被误判为开门中",
+				!legacyCar0 && legacyCar1 && legacyCar2);
+
+		// 新实现：同帧内 opening 保持一致（帧首算一次，后续车厢复用）
+		final boolean frameOpening = mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(closingDoorValue, previousFrameValue);
+		check("★ 新实现：同帧 3 个车厢 opening 一致且为关门中",
+				!frameOpening && !frameOpening && !frameOpening);
+
+		// --- 帧切换后重新求值 ---
+		final float nextFrameValue = 0.10F;
+		final boolean nextFrameOpening = mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(nextFrameValue, closingDoorValue);
+		check("下一帧仍下降 → 继续关门中", !nextFrameOpening);
+
+		// --- 开门方向 ---
+		final float openingValue = 0.80F;
+		check("门开度回升 → 开门中",
+				mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(openingValue, 0.30F));
 	}
 
 	/**

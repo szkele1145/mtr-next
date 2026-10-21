@@ -14,7 +14,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -39,8 +38,28 @@ public final class VehiclePackLoader {
 	/** 4.0 车包入口路径（4.x 固定：assets/<ns>/mtr_custom_resources.json） */
 	private static final ResourceLocation PACK_ENTRY = new ResourceLocation("mtr", "mtr_custom_resources.json");
 
-	/** 已解析的 4.0 车辆（跨资源包合并，id 唯一） */
-	private static final Map<String, VehicleResource> VEHICLES = new LinkedHashMap<>();
+	/**
+	 * 已解析的 4.0 车辆（跨资源包合并，id 唯一）。
+	 * <p>
+	 * ★ [0.36.8] 由 {@code LinkedHashMap} 改为 {@code ConcurrentHashMap}。
+	 * <p>
+	 * <b>原实现的并发缺陷</b>：这张表<b>写</b>在资源重载线程
+	 * （YMTR {@code CustomResources.reload} → 本类 {@code reload()} 里
+	 * {@code clear()} + {@code put()}），<b>读</b>在渲染线程
+	 * （{@code getVehicle(id)} 每帧每车厢调一次）。
+	 * {@code LinkedHashMap} / {@code HashMap} <b>不是线程安全</b>的：
+	 * {@code put} 触发 {@code resize} 时读线程可能看到**撕裂的链表结构**
+	 * （next 指针与 hash 不一致）⇒ 可能返回错误值，甚至在损坏的桶里死循环。
+	 * {@code /reload} 与「正好有列车在渲染」重叠时即可触发。
+	 * <p>
+	 * {@code ConcurrentHashMap} 消除该风险。<b>插入顺序不再保证</b>，
+	 * 但两个消费方（{@code TrainTypeBridge} 注册车型、{@code FormationScreen} 列 UI）
+	 * 都只<b>遍历</b>、不依赖顺序 ⇒ 无行为变化。
+	 * <p>
+	 * 注意：{@code ConcurrentHashMap} 不接受 null key/value，
+	 * 而 {@code reload()} 里 {@code res.id} 与 {@code res} 均已判空 ⇒ 安全。
+	 */
+	private static final Map<String, VehicleResource> VEHICLES = new java.util.concurrent.ConcurrentHashMap<>();
 
 	private VehiclePackLoader() {
 	}

@@ -758,3 +758,80 @@ mtr-next 在 `Element.upstreamBox()` 里做归一化（min/max 排序），
    已在该 init 脚本里补回 Fabric maven。
    另：git 需配代理 `http://127.0.0.1:65532`（系统代理）才能 push。
 等渲染重构完成、整体验证通过后一并发布。
+
+---
+
+## 五i、0.36.8：门运动方向（`opening`）多车厢串味修复 + 车辆表并发安全（2026-10-21 21:50）
+
+### 改动 1（★真 bug）：`opening` 在多车厢列车上恒为「开门中」
+
+**症状**：门关闭时，关门时段的门时序窗口完全失效，门的 Z 位移走错曲线分支。
+
+**根因**：
+
+| 项 | 粒度 | 后果 |
+|---|---|---|
+| `renderCar(int carNumber, …)` | **每车厢**调一次 | — |
+| `previousDoorValue`（旧实现） | **每列车**一份（渲染器实例级） | 第 2 辆车厢读到的已是第 1 辆车厢刚写回的**同一个**门开度 |
+| 旧判定 `doorValue >= previousDoorValue` | — | 恒为 `true` ⇒ **`opening` 恒为「开门中」** |
+
+⇒ 关门时仍用 `renderFromOpeningDoorTime`/`renderUntilOpeningDoorTime` 窗口
+（关门的 `renderFromClosingDoorTime` 等**整组失效**），
+且 `getDoorAnimationZ(…, opening=true)` 走**开门曲线**而非关门曲线。
+
+**上游语义对照**：上游 `ModelPropertiesPart.java:338` 的
+`opening = vehicle.persistentVehicleData.getAdjustedDoorMultiplier(vehicle.vehicleExtraData) > 0`
+是**车辆级**的 —— 一列车只有一个 `opening` 值，所有车厢共用。
+
+**修法（两条）**：
+
+1. **优先**用 YMTR 的权威 `TrainClient.isDoorOpening()`。
+   YMTR 字节码实证（`mtr/data/TrainClient.class`）：
+   ```java
+   doorOpening = (doorValue > oldDoorValue);   // fcmpl / ifle
+   // ↑ 紧接着才调用 renderCar(...)
+   ```
+   它是 **TrainClient（车辆）级**、**每帧一次**算出的 ⇒ **与上游语义一致**。
+   （`isDoorOpening()` 在 MTR 3.2.2-hf1 / YMTR 3.6.x 的 fabric+forge **6 个目标 jar 上
+   全部存在**，签名统一为 `public final boolean isDoorOpening()`。）
+2. **回退路径**（`train == null`，仅注册模板时）用**帧标记**
+   （`System.nanoTime()/1e6`）保证 `previousDoorValue` **一帧只更新一次**，
+   同帧多车厢共用同一 `opening`。
+
+**回归测试**（`ParserSelfTest.testDoorOpeningDirection()`，**7 项**）：
+
+| 断言 | 作用 |
+|---|---|
+| 「★ 旧实现复现：第 2 辆车厢被误判为开门中」 | **直接证明 bug 真实存在**（不是假想） |
+| 「★ 新实现：同帧 3 个车厢 opening 一致且为关门中」 | 证明修复生效 |
+| 上升/下降/不变/下一帧/回升 5 项 | 锁定比较语义 |
+
+### 改动 2（并发安全）：`VehiclePackLoader.VEHICLES` 改 `ConcurrentHashMap`
+
+| 项 | 值 |
+|---|---|
+| **写** | 资源重载线程（YMTR `CustomResources.reload` → `reload()` 里 `clear()` + `put()`） |
+| **读** | 渲染线程（`getVehicle(id)` **每帧每车厢**调一次） |
+| 原类型 | `LinkedHashMap` —— **非线程安全** |
+
+`HashMap` / `LinkedHashMap` 在**并发 put/get** 下，`put` 触发 `resize` 时读线程
+可能看到**撕裂的链表结构**（next 指针与 hash 不一致）
+⇒ 可能返回错误值，甚至在损坏的桶里死循环。
+`/reload` 与「正好有列车在渲染」重叠时即可触发。
+
+⇒ 改 `java.util.concurrent.ConcurrentHashMap`。
+**插入顺序不再保证**，但两个消费方（`TrainTypeBridge` 注册车型、`FormationScreen` 列 UI）
+都只**遍历**、不依赖顺序 ⇒ **无行为变化**。
+
+> 顺带核实：本仓库其余 6 处静态 Map
+> （`BbModelTree.CACHE` / `Properties4xLoader.CACHE` /
+> `PositionDefinitions4xLoader.CACHE` / `BveTrainSound.CFG_CACHE` /
+> `FormationStore.FORMATIONS` / `HierarchyFieldFinder.CACHE`）
+> **本来就都是 `ConcurrentHashMap`** —— `VehiclePackLoader` 是**唯一的例外**，
+> 说明这是遗漏而非有意设计。
+
+### 验证
+
+- `parserSelfTest` **PASS=270 FAIL=0**（0.36.7 为 263，+7）；
+- `bbModelTreeTest` PASS=46 FAIL=0；
+- 构建 0 错误。

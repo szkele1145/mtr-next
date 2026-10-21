@@ -47,7 +47,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 */
 	private final Map<String, DoorMovementInterpolation> doorInterpolations = new java.util.concurrent.ConcurrentHashMap<>();
 	/**
-	 * 上一帧的门开度（每车一份）。
+	 * 上一帧的门开度（<b>每列车一份</b>）。
 	 * <p>
 	 * 上游的 {@code opening} 来自 {@code getAdjustedDoorMultiplier(...) > 0}
 	 * （{@code ModelPropertiesPart.java:338}）——它是**门运动方向**，
@@ -56,8 +56,30 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	 * 因此这里用**门开度的变化方向**推导：比上一帧大 = 开门中。
 	 * <p>
 	 * 上游同名但语义不同，勿混用。
+	 * <p>
+	 * ★ [0.36.8] <b>这里曾经是个真 bug</b>：{@code renderCar} 是<b>每车厢</b>调一次，
+	 * 而本字段是<b>每列车</b>一份 ⇒ 第 2 辆车厢读到的已是第 1 辆车厢刚写回的
+	 * <b>同一个</b> {@code doorValue} ⇒ {@code doorValue >= previousDoorValue}
+	 * 恒为 true ⇒ <b>{@code opening} 恒为「开门中」，关门时也算开门中</b>。
+	 * 后果：① 关门时段的门时序窗口（{@code renderFromClosingDoorTime} 等）完全失效；
+	 * ② 门的 Z 位移走错曲线分支（开门曲线而非关门曲线），关门动画不正确。
+	 * <p>
+	 * 现改为：<b>优先</b>用 YMTR 的权威 {@code TrainClient.isDoorOpening()}
+	 * （<b>车辆级</b>、每帧一次算出，与上游语义一致）；
+	 * 回退路径用 {@link #lastFallbackFrame} 保证<b>一帧只更新一次</b>。
 	 */
 	private float previousDoorValue;
+	/**
+	 * [0.36.8] 回退路径的帧标记：保证 {@code previousDoorValue} <b>一帧只更新一次</b>
+	 * （否则多车厢列车会让 {@code opening} 恒为 true）。
+	 * <p>
+	 * 用 {@code System.nanoTime()} 的毫秒计数近似帧号；同帧内多次调用共用同一值。
+	 */
+	private long lastFallbackFrame = -1L;
+	/**
+	 * [0.36.8] 回退路径算出的 {@code opening}（同帧内复用）。
+	 */
+	private boolean fallbackOpening;
 
 	/** 供 TrainTypeBridge 注册使用（无列车上下文，门位移退化为布尔） */
 	public BbModelTrainRenderer(String trainId) {
@@ -86,9 +108,9 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			final boolean anyDoorOpen = doorLeftOpen || doorRightOpen;
 			final float doorValue = doorValue(anyDoorOpen);
 			// 上游 opening = 门运动方向（>0 开、<0 关）。YMTR 只给布尔，
-			// 这里用门开度的变化方向推导（比上一帧大 = 开门中）。
-			final boolean opening = doorValue >= previousDoorValue;
-			previousDoorValue = doorValue;
+			// 这里优先用 YMTR 的权威值（车辆级、每帧一次算，与上游语义一致），
+			// 拿不到时才回退到自维护的门开度变化方向。
+			final boolean opening = doorOpening(doorValue);
 
 			matrices.pushPose();
 			matrices.translate(x, y, z);
@@ -256,6 +278,72 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	}
 
 	private static final float[] ZERO = {0.0F, 0.0F};
+
+	/**
+	 * [0.36.8] 门运动方向（上游 {@code opening} 语义）。
+	 * <p>
+	 * <b>优先</b>用 YMTR 的 {@code TrainClient.isDoorOpening()}：
+	 * <ul>
+	 *   <li>它是 <b>TrainClient（车辆）级</b>的 {@code doorOpening} 字段，</li>
+	 *   <li>由 {@code doorValue > oldDoorValue} 算出，<b>每帧一次</b>，</li>
+	 *   <li>与上游 {@code PersistentVehicleData.getAdjustedDoorMultiplier(...) > 0}
+	 *       的<b>车辆级</b>语义一致。</li>
+	 * </ul>
+	 * YMTR 字节码实证（{@code mtr/data/TrainClient.class}）：
+	 * <pre>
+	 *   getfield  doorValue:F
+	 *   getfield  oldDoorValue:F
+	 *   fcmpl / ifle          ← doorValue &gt; oldDoorValue ? 开门中 : 关门中
+	 *   putfield doorOpening:Z
+	 *   ...
+	 *   renderCar:(IDDDFFZZ)V ← 紧接着调用，顺序正确
+	 * </pre>
+	 * <p>
+	 * <b>回退</b>（{@code train == null}，仅注册模板时）：用自维护的门开度变化方向，
+	 * 但<b>一帧只更新一次</b>（{@link #lastFallbackFrame}）——
+	 * 否则多车厢列车会让第 2 辆车厢读到本帧刚写回的值 ⇒ {@code opening} 恒为 true。
+	 *
+	 * @param doorValue 当前门开度（绝对值）
+	 */
+	private boolean doorOpening(float doorValue) {
+		if (train != null) {
+			try {
+				return train.isDoorOpening();
+			} catch (final Throwable ignored) {
+				// 老版本宿主没有这个方法 → 走回退
+			}
+		}
+		// 回退：一帧只更新一次（同帧多车厢共用同一 opening）
+		final long frame = System.nanoTime() / 1_000_000L;
+		if (frame != lastFallbackFrame) {
+			lastFallbackFrame = frame;
+			fallbackOpening = fallbackOpening(doorValue, previousDoorValue);
+			previousDoorValue = doorValue;
+		}
+		return fallbackOpening;
+	}
+
+	/**
+	 * [0.36.8] 回退路径的「门运动方向」纯函数（可离线回归测试）。
+	 * <p>
+	 * 语义 = <b>门开度不小于上一帧 ⇒ 开门中</b>。
+	 * <p>
+	 * ★ 这里曾经有个<b>真 bug</b>：原实现把这条判定直接写在
+	 * {@code renderCar} 里，而 {@code renderCar} 是<b>每车厢</b>调一次、
+	 * 状态 {@code previousDoorValue} 却只有<b>每列车</b>一份
+	 * ⇒ 第 2 辆车厢读到的已是第 1 辆车厢刚写回的<b>同一个</b>门开度
+	 * ⇒ 判定恒为 true ⇒ <b>关门时也被当成开门中</b>。
+	 * <p>
+	 * 修法见 {@link #doorOpening(float)}：优先用车辆级的
+	 * {@code TrainClient.isDoorOpening()}，回退路径用帧标记保证一帧只更新一次。
+	 * 本方法只负责<b>单次比较</b>的语义，供测试直接验证。
+	 *
+	 * @param doorValue     当前门开度（绝对值）
+	 * @param previousValue 上一帧门开度
+	 */
+	public static boolean fallbackOpening(float doorValue, float previousValue) {
+		return doorValue >= previousValue;
+	}
 
 	/** host 门开度；拿不到时按布尔退化 */
 	private float doorValue(boolean anyDoorOpen) {
