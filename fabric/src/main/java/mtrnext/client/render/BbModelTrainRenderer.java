@@ -14,6 +14,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -180,13 +181,24 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			final boolean shouldRender = info.shouldRenderAt(doorValue, opening);
 			// 上游 ModelPropertiesPart.java:317 —— per-part 闪烁判定
 			final boolean flashOn = info.flashOn(now);
+			// [0.37.0] 预取位定义组：原先在 name × defName 双层循环内做
+			// positions.get(defName) 查表 ⇒ 同一 defName 被重复查 names.length 次。
+			// 这里在 name 循环外一次性解析成数组，**渲染顺序完全不变**
+			// （仍是 name-major、defName-minor），只把查表次数从
+			// names × defNames 降到 defNames。
+			final List<String> defNames = info.positionDefinitionNames;
+			final PositionDefinitions4xLoader.PositionGroup[] groups =
+					new PositionDefinitions4xLoader.PositionGroup[defNames.size()];
+			for (int d = 0; d < groups.length; d++) {
+				groups[d] = positions.get(defNames.get(d));
+			}
 			for (final String name : info.names) {
 				final ModelPart anchor = tree.groupParts.get(name);
 				if (anchor == null) {
 					continue;
 				}
-				for (final String defName : info.positionDefinitionNames) {
-					final PositionDefinitions4xLoader.PositionGroup group = positions.get(defName);
+				for (int d = 0; d < groups.length; d++) {
+					final PositionDefinitions4xLoader.PositionGroup group = groups[d];
 					if (group == null) {
 						continue;
 					}

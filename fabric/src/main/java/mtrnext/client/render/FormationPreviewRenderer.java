@@ -97,13 +97,21 @@ public final class FormationPreviewRenderer {
 				// （每条 wrapper 传自己的 flashOnTime/flashOffTime 给新建的
 				//  ModelPropertiesPart 实例，见 ModelPropertiesPartWrapper.java:80-105）
 				final boolean flashOn = info.flashOn(now);
+				// [0.37.0] 预取位定义组（查表次数从 names × defNames 降到 defNames；
+				// 渲染顺序 name-major / defName-minor **不变**）
+				final java.util.List<String> defNames = info.positionDefinitionNames;
+				final PositionDefinitions4xLoader.PositionGroup[] groups =
+						new PositionDefinitions4xLoader.PositionGroup[defNames.size()];
+				for (int d = 0; d < groups.length; d++) {
+					groups[d] = positions.get(defNames.get(d));
+				}
 				for (final String name : info.names) {
 					final ModelPart anchor = tree.groupParts.get(name);
 					if (anchor == null) {
 						continue;
 					}
-					for (final String defName : info.positionDefinitionNames) {
-						final PositionDefinitions4xLoader.PositionGroup group = positions.get(defName);
+					for (int d = 0; d < groups.length; d++) {
+						final PositionDefinitions4xLoader.PositionGroup group = groups[d];
 						if (group == null) {
 							continue;
 						}
