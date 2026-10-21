@@ -228,5 +228,19 @@ positionsFlipped.forEach(p -> cb.accept(-p.getX(), p.getY(), p.getZ(), true));
 - 光照/透明批次分层（`isTranslucentBatch`）与上游的差异
 - `OptimizedModel`（优化渲染）路径：上游在 `OptimizedRenderer.hasOptimizedRendering()` 为真时
   走 `MaterialGroup.addCube` 抽取 cube 的路径，mtr-next 用的是**非优化**的 `ModelPart.render`
-  ——与上游默认行为一致，但优化模式未复刻
+  ——与上游默认行为一致，但优化模式未复刻。
+  **⚠️ 精确的风险（2026-10-21 逐行比对上游 `ModelPropertiesPart.renderNormal` L351-364 得出）**：
+  上游的分支是**二选一**——
+  ```java
+  if (OptimizedRenderer.hasOptimizedRendering()) {
+      // 只画 optimizedModelDoor（门开时才画），常规 modelParts **完全不画**
+  } else {
+      partDetails.modelParts.forEach(modelPart -> modelPart.render(...));
+  }
+  ```
+  所以当资源包**启用了优化渲染且同时提供 `optimizedModelDoor`** 时，
+  上游画面里**没有**常规门几何，而 mtr-next **仍然会画** ⇒
+  **可能多出一层门**（"重影"）。
+  本地暂无启用优化渲染的 MTR 4 资源包可验证，故**只标注不修**；
+  若日后遇到"门重影"类问题，**先查资源包是否启用了优化渲染**。
 - 三个 mod（mtr-next + mtr-turbo + mtr-ante-continue）同时加载的运行时共存
