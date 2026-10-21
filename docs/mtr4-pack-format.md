@@ -180,5 +180,10 @@ gangway/barrier 是**程序化几何**（宽高 + 偏移 + 六向贴图），不
 - 上游 `OptimizedModel` 优化渲染路径未复刻；上游 bbmodel 走的
   就是**非优化** `ModelPart.render`，与 mtr-next 现状一致。
 - `flipTextureV` 对 bbmodel **无效**（上游 bbmodel 分支不消费它）——已确证。
-- MC `Cube` 多边形顺序仅在「全六面 + 非 mirror」情形下实测确认；
-  mirror / 可见面变体未实证。
+- MC `Cube` 多边形顺序 —— **已闭合（2026-10-21）**：
+  字节码实证（MC 1.20.1 `ModelPart$Cube` / `ModelPart$Polygon`）确证
+  **无论 `mirror` 与否、无论跳过哪些可见面，相对顺序恒为
+  DOWN, UP, WEST, NORTH, EAST, SOUTH**；
+  `mirror` 只翻转**顶点绕序**与**法线 X 分量**，**不改 UV 采样区域**。
+  证据：`docs/_upstream/binary-evidence/mc-cube-1.20.1/README.md`。
+  （mtr-next 走原生 `addBox` 不用自己算 UV ⇒ 渲染行为无变化，**不需要改代码**。）
