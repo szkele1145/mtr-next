@@ -1,0 +1,17 @@
+﻿Compiled from "CapturingVertexConsumer.java"
+public final class org.mtr.mapping.render.vertex.CapturingVertexConsumer implements net.minecraft.class_4588 {
+  private org.mtr.mapping.render.model.RawMesh buildingMesh;
+  private org.mtr.mapping.render.vertex.Vertex buildingVertex;
+  public final org.mtr.mapping.render.model.RawModel rawModel;
+  public org.mtr.mapping.render.vertex.CapturingVertexConsumer();
+  public void beginStage(org.mtr.mapping.render.batch.MaterialProperties);
+  public net.minecraft.class_4588 method_22912(double, double, double);
+  public net.minecraft.class_4588 method_1336(int, int, int, int);
+  public net.minecraft.class_4588 method_22913(float, float);
+  public net.minecraft.class_4588 method_22917(int, int);
+  public net.minecraft.class_4588 method_22921(int, int);
+  public net.minecraft.class_4588 method_22914(float, float, float);
+  public void method_1344();
+  public void method_22901(int, int, int, int);
+  public void method_35666();
+}

@@ -34,6 +34,7 @@ public final class ParserSelfTest {
 		testOutlinerGroupPath();
 		testDoorAnimation4x();
 		testBbModelScaleAndUv();
+		testDoorAnimationPreparse();
 		testUpstreamBoxRotation();
 		testDoorAnnotation();
 		testDoorOverlapDetection();
@@ -98,6 +99,68 @@ public final class ParserSelfTest {
 				json("{\"parts\":\"oops\"}")).isEmpty());
 		check("names 非数组忽略 -> 部件仍创建", mtrnext.client.render.Properties4xLoader.parseParts(
 				json("{\"parts\":[{\"names\":\"notarray\"}]}")).size() == 1);
+	}
+
+	/**
+	 * [0.36.7] 加载期预解析的门动画枚举 / 插值器 key 前缀。
+	 * <p>
+	 * 渲染端每帧每门部件都要用曲线类型与插值器 key；原先每帧
+	 * {@code DoorAnimation4x.parse(String)}（values() 克隆 + 13 次字符串比较）
+	 * 并重新拼 key 字符串。改为加载期预解析后，必须保证
+	 * <b>预解析结果与逐次 parse 完全等价</b>，否则会静默改变门动画。
+	 * <p>
+	 * 覆盖：全部枚举值 / 未知值（回退 STANDARD）/ null / 大小写不同 /
+	 * 插值器 key 前缀拼接与 {@link mtrnext.client.render.DoorMovementInterpolation#key} 等价。
+	 */
+	private static void testDoorAnimationPreparse() {
+		System.out.println("[加载期预解析：门动画枚举 + 插值器 key 前缀]");
+
+		// --- 全部枚举值的预解析 == parse ---
+		boolean allEnumOk = true;
+		for (final mtrnext.client.render.DoorAnimation4x t : mtrnext.client.render.DoorAnimation4x.values()) {
+			final var info = mtrnext.client.render.Properties4xLoader.parseParts(
+					json("{\"parts\":[{\"doorAnimationType\":\"" + t.name() + "\"}]}")).get(0);
+			if (info.doorAnimation != t) {
+				allEnumOk = false;
+				System.out.println("  FAIL 枚举 " + t.name() + " 预解析为 " + info.doorAnimation);
+			}
+		}
+		check("全部 " + mtrnext.client.render.DoorAnimation4x.values().length + " 个枚举值预解析一致", allEnumOk);
+
+		// --- 未知值回退 STANDARD（与 parse 一致） ---
+		final var unknown = mtrnext.client.render.Properties4xLoader.parseParts(
+				json("{\"parts\":[{\"doorAnimationType\":\"NO_SUCH_ANIM\"}]}")).get(0);
+		check("未知值回退 STANDARD",
+				unknown.doorAnimation == mtrnext.client.render.DoorAnimation4x.STANDARD
+						&& unknown.doorAnimation == mtrnext.client.render.DoorAnimation4x.parse(unknown.doorAnimationType));
+
+		// --- 缺省（字段不存在）→ STANDARD ---
+		final var missing = mtrnext.client.render.Properties4xLoader.parseParts(
+				json("{\"parts\":[{}]}")).get(0);
+		check("缺省 doorAnimationType → STANDARD", missing.doorAnimation == mtrnext.client.render.DoorAnimation4x.STANDARD);
+
+		// --- key 前缀拼接与 key() 逐字等价（两个 flipped 都验） ---
+		final var keyed = mtrnext.client.render.Properties4xLoader.parseParts(
+				json("{\"parts\":[{\"doorZMultiplier\":11.0,\"doorAnimationType\":\"STANDARD_SLOW\"}]}")).get(0);
+		check("key 前缀 + flipped == key()（flipped=false）",
+				(keyed.interpolationKeyPrefix + false)
+						.equals(mtrnext.client.render.DoorMovementInterpolation.key(
+								keyed.doorZMultiplier, keyed.doorAnimationType, false)));
+		check("key 前缀 + flipped == key()（flipped=true）",
+				(keyed.interpolationKeyPrefix + true)
+						.equals(mtrnext.client.render.DoorMovementInterpolation.key(
+								keyed.doorZMultiplier, keyed.doorAnimationType, true)));
+		check("keyPrefix 自身 == key() 去掉尾部 flipped 段",
+				mtrnext.client.render.DoorMovementInterpolation.keyPrefix(11.0, "STANDARD_SLOW")
+						.equals("11.0_STANDARD_SLOW_"));
+
+		// --- 负倍率（ERIDU men3 = −11.0）也要正确 ---
+		final var neg = mtrnext.client.render.Properties4xLoader.parseParts(
+				json("{\"parts\":[{\"doorZMultiplier\":-11.0,\"doorAnimationType\":\"STANDARD\"}]}")).get(0);
+		check("负倍率 key 前缀正确",
+				(neg.interpolationKeyPrefix + false)
+						.equals(mtrnext.client.render.DoorMovementInterpolation.key(
+								neg.doorZMultiplier, neg.doorAnimationType, false)));
 	}
 
 	/**

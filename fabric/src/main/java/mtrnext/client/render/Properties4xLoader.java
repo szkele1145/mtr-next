@@ -139,6 +139,11 @@ public final class Properties4xLoader {
 			info.doorXMultiplier = (float) dbl(p, "doorXMultiplier", 0.0);
 			info.doorZMultiplier = (float) dbl(p, "doorZMultiplier", 0.0);
 			info.doorAnimationType = str(p, "doorAnimationType", "STANDARD");
+			// [0.36.7] 加载期一次性预解析曲线枚举与插值器 key 前缀
+			// （渲染期每帧每部件都会用到，见字段注释）。
+			info.doorAnimation = DoorAnimation4x.parse(info.doorAnimationType);
+			info.interpolationKeyPrefix = DoorMovementInterpolation.keyPrefix(
+					info.doorZMultiplier, info.doorAnimationType);
 			info.condition = str(p, "condition", "NORMAL");
 			info.renderStage = str(p, "renderStage", "EXTERIOR");
 			info.type = str(p, "type", "NORMAL");
@@ -182,6 +187,28 @@ public final class Properties4xLoader {
 		public float doorXMultiplier = 0.0F;
 		public float doorZMultiplier = 0.0F;
 		public String doorAnimationType = "STANDARD";
+		/**
+		 * [0.36.7] {@code doorAnimationType} 的<b>预解析枚举</b>。
+		 * <p>
+		 * 渲染端每帧每门部件都要用曲线类型；原先每帧调
+		 * {@code DoorAnimation4x.parse(String)}（内部 {@code values()} 克隆数组
+		 * + 13 次字符串比较）。ERIDU 车包有 42 个门部件 ⇒ 每帧 42 次无谓解析。
+		 * 解析时机移到**加载期**（一次性），渲染期零成本。
+		 * <p>
+		 * 与 {@code DoorAnimation4x.parse} 的结果**完全一致**（同一函数、同一输入），
+		 * 未知值同样回退 {@code STANDARD}。
+		 */
+		public DoorAnimation4x doorAnimation = DoorAnimation4x.STANDARD;
+		/**
+		 * [0.36.7] 上游插值器缓存 key 的**预计算**值。
+		 * <p>
+		 * 上游 {@code PersistentVehicleData} 以
+		 * {@code doorZMultiplier + "_" + doorAnimationType + "_" + flipped} 为 key
+		 * 缓存插值器。原先渲染期每帧每部件拼一个新字符串（GC 压力），
+		 * 现在把**不随 flipped 变化的前缀**预先拼好，
+		 * 渲染期只需拼一次 {@code prefix + flipped}（仍是新字符串，但只拼一次且可复用）。
+		 */
+		public String interpolationKeyPrefix = "";
 		public String condition = "NORMAL";
 		public String renderStage = "EXTERIOR";
 		public String type = "NORMAL";

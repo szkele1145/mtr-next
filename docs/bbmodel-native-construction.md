@@ -227,20 +227,18 @@ positionsFlipped.forEach(p -> cb.accept(-p.getX(), p.getY(), p.getZ(), true));
 - 实际贴图采样是否与上游一致（需要真实客户端 + 资源包）
 - 光照/透明批次分层（`isTranslucentBatch`）与上游的差异
 - `OptimizedModel`（优化渲染）路径：上游在 `OptimizedRenderer.hasOptimizedRendering()` 为真时
-  走 `MaterialGroup.addCube` 抽取 cube 的路径，mtr-next 用的是**非优化**的 `ModelPart.render`
-  ——与上游默认行为一致，但优化模式未复刻。
-  **⚠️ 精确的风险（2026-10-21 逐行比对上游 `ModelPropertiesPart.renderNormal` L351-364 得出）**：
-  上游的分支是**二选一**——
-  ```java
-  if (OptimizedRenderer.hasOptimizedRendering()) {
-      // 只画 optimizedModelDoor（门开时才画），常规 modelParts **完全不画**
-  } else {
-      partDetails.modelParts.forEach(modelPart -> modelPart.render(...));
-  }
-  ```
-  所以当资源包**启用了优化渲染且同时提供 `optimizedModelDoor`** 时，
-  上游画面里**没有**常规门几何，而 mtr-next **仍然会画** ⇒
-  **可能多出一层门**（"重影"）。
+  走 `MaterialGroup.addCube` 路径，mtr-next 用的是**非优化**的 `ModelPart.render`。
+  **★ 2026-10-21 字节码确证（已大幅下调风险）**：
+  `MaterialGroup.addCube` **并不抽取 cube 几何** —— 它把整个 `ModelPart` 挂到
+  `CapturingVertexConsumer`（MC `VertexConsumer` 的实现）上**照常走 `ModelPart.render`**，
+  优化点只是**顶点批次合并**（减少 draw call）。
+  ⇒ **渲染语义与 mtr-next 等价**，mtr-next 仅少了这一层性能优化。
+  证据：`docs/_upstream/binary-evidence/optimized-model-addcube-4.0.6/README.md`。
+  **⚠️ 残留风险（与 `addCube` 无关）**：上游 `ModelPropertiesPart.renderNormal`
+  的优化分支画的是**另一个** ModelPart（`partDetails.optimizedModelDoor`），
+  而常规分支画 `partDetails.modelParts`；上游的分支是**二选一**。
+  所以当资源包**启用优化渲染且同时提供 `optimizedModelDoor`** 时，
+  上游画面里**没有**常规门几何，而 mtr-next **仍然会画** ⇒ **可能多出一层门（重影）**。
   本地暂无启用优化渲染的 MTR 4 资源包可验证，故**只标注不修**；
   若日后遇到"门重影"类问题，**先查资源包是否启用了优化渲染**。
 - 三个 mod（mtr-next + mtr-turbo + mtr-ante-continue）同时加载的运行时共存

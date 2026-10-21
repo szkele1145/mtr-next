@@ -242,12 +242,13 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		if (info == null || (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)) {
 			return ZERO;
 		}
-		final DoorAnimation4x anim = DoorAnimation4x.parse(info.doorAnimationType);
+		// [0.36.7] 用加载期预解析的枚举（原先每帧每部件重新 parse 字符串）
+		final DoorAnimation4x anim = info.doorAnimation;
 		final float time = Math.abs(doorValue);
 		final float dx = anim.getDoorAnimationX(info.doorXMultiplier, flipped, time);
 		// 上游：曲线值 → 插值层（按 key 复用插值器）→ 与 doorOverride 取绝对值较大者
 		final float rawZ = anim.getDoorAnimationZ(info.doorZMultiplier, flipped, time, opening);
-		final String key = DoorMovementInterpolation.key(info.doorZMultiplier, info.doorAnimationType, flipped);
+		final String key = info.interpolationKeyPrefix + flipped;
 		final DoorMovementInterpolation interpolation =
 				doorInterpolations.computeIfAbsent(key, k -> new DoorMovementInterpolation());
 		final float dz = interpolation.setAndGet(rawZ, opening);

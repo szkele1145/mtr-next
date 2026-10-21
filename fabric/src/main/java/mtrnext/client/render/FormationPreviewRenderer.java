@@ -122,7 +122,8 @@ public final class FormationPreviewRenderer {
 	private static void drawInstance(PoseStack poseStack, VertexConsumer vc, ModelPart anchor,
 			Properties4xLoader.PartInfo info, boolean flipped, float px, float py, float pz,
 			boolean shouldRender, boolean flashOn) {
-		final DoorAnimation4x anim = DoorAnimation4x.parse(info.doorAnimationType);
+		// [0.36.7] 用加载期预解析的枚举（原先每帧每部件重新 parse 字符串）
+		final DoorAnimation4x anim = info.doorAnimation;
 		final float dx = (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)
 				? 0.0F : anim.getDoorAnimationX(info.doorXMultiplier, flipped, 1.0F);
 		final float dz = (info.doorXMultiplier == 0.0F && info.doorZMultiplier == 0.0F)

@@ -137,4 +137,18 @@ public final class DoorMovementInterpolation {
 	public static String key(double doorZMultiplier, String doorAnimationType, boolean flipped) {
 		return doorZMultiplier + "_" + doorAnimationType + "_" + flipped;
 	}
+
+	/**
+	 * [0.36.7] key 的**前缀**部分（不含 {@code flipped}）。
+	 * <p>
+	 * 上游 key = {@code doorZMultiplier + "_" + doorAnimationType + "_" + flipped}，
+	 * 其中前两段在**加载期就固定**。把前缀预先拼好，渲染期只需
+	 * {@code prefix + flipped}，省掉每帧每部件两次字符串转换。
+	 * <p>
+	 * 与 {@link #key(double, String, boolean)} 生成的字符串**逐字相同**
+	 * （{@code keyPrefix} 的结果再拼 {@code "_" + flipped}）。
+	 */
+	public static String keyPrefix(double doorZMultiplier, String doorAnimationType) {
+		return doorZMultiplier + "_" + doorAnimationType + "_";
+	}
 }

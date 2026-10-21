@@ -1,0 +1,31 @@
+﻿Compiled from "ModelPartExtension.java"
+public final class org.mtr.mapping.mapper.ModelPartExtension extends org.mtr.mapping.tool.DummyClass {
+  net.minecraft.class_630 modelPart;
+  private float tempPivotX;
+  private float tempPivotY;
+  private float tempPivotZ;
+  private float tempRotationX;
+  private float tempRotationY;
+  private float tempRotationZ;
+  private int tempU;
+  private int tempV;
+  private net.minecraft.class_5610 modelPartData;
+  private boolean childAdded;
+  private final java.util.List<java.lang.String> nameTree;
+  org.mtr.mapping.mapper.ModelPartExtension(net.minecraft.class_5610);
+  private org.mtr.mapping.mapper.ModelPartExtension(java.lang.String, net.minecraft.class_5610);
+  public void setPivot(float, float, float);
+  public org.mtr.mapping.mapper.ModelPartExtension setTextureUVOffset(int, int);
+  public void setRotation(float, float, float);
+  public org.mtr.mapping.mapper.ModelPartExtension addChild();
+  public void addCuboid(float, float, float, int, int, int, float, boolean);
+  public void setOffset(float, int, float);
+  public void render(org.mtr.mapping.mapper.GraphicsHolder, float, float, float, int, int);
+  public void render(org.mtr.mapping.mapper.GraphicsHolder, float, float, float, float, int, int);
+  void setModelPart(net.minecraft.class_630);
+  private void setChild();
+  private java.lang.String getLastName();
+  private net.minecraft.class_5603 getModelTransform();
+  private static java.lang.String getRandomPartName();
+  private void lambda$setModelPart$0(java.lang.String);
+}

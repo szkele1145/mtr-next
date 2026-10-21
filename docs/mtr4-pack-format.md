@@ -179,6 +179,14 @@ gangway/barrier 是**程序化几何**（宽高 + 偏移 + 六向贴图），不
 - `openDoorways` 的逐部件 Box 匹配、`canOpen` 判定 —— 同上，属宿主差异。
 - 上游 `OptimizedModel` 优化渲染路径未复刻；上游 bbmodel 走的
   就是**非优化** `ModelPart.render`，与 mtr-next 现状一致。
+  **★ 2026-10-21 已确证**（`docs/_upstream/binary-evidence/optimized-model-addcube-4.0.6/`）：
+  上游 `MaterialGroup.addCube` **并不抽取 cube 几何** —— 它把整个 `ModelPart`
+  挂到 `CapturingVertexConsumer`（MC `VertexConsumer` 的实现）上**照常走
+  `ModelPart.render`**，只做**顶点批次合并**。
+  ⇒ **渲染语义与 mtr-next 等价**，差的只是 draw call 合并这一层性能优化。
+  上游 `ModelPropertiesPart` 的优化分支画的是**另一个** ModelPart
+  （`partDetails.optimizedModelDoor`）⇒ 那条「门重影」推断仍成立，
+  但**与 `addCube` 无关**，且本地无启用优化渲染的资源包 ⇒ 仍**只标注不修**。
 - `flipTextureV` 对 bbmodel **无效**（上游 bbmodel 分支不消费它）——已确证。
 - MC `Cube` 多边形顺序 —— **已闭合（2026-10-21）**：
   字节码实证（MC 1.20.1 `ModelPart$Cube` / `ModelPart$Polygon`）确证
@@ -187,3 +195,8 @@ gangway/barrier 是**程序化几何**（宽高 + 偏移 + 六向贴图），不
   `mirror` 只翻转**顶点绕序**与**法线 X 分量**，**不改 UV 采样区域**。
   证据：`docs/_upstream/binary-evidence/mc-cube-1.20.1/README.md`。
   （mtr-next 走原生 `addBox` 不用自己算 UV ⇒ 渲染行为无变化，**不需要改代码**。）
+- ~~上游 `OptimizedModel.MaterialGroup.addCube` 的 cube 抽取方式未取源码~~ ——
+  **已闭合（2026-10-21）**：见上方「优化渲染路径」条目。
+  证据：`docs/_upstream/binary-evidence/optimized-model-addcube-4.0.6/README.md`。
+  （**仍待查**：上游何时启用优化渲染的资源包侧开关、`addCube` 的调用点。）
+- s700 有 10 个元素 `mirror_uv=true` 但 `west=swapped`（疑似 UV 区域重叠的重复件）—— **仍未查**。
