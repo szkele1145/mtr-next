@@ -54,7 +54,7 @@ const data = {
     '- 构建 0 错误。',
     '',
     '> 渲染效果需图形客户端肉眼验证（见 `docs/client-verification-boundary.md`）。',
-  ],
+  ].join('\n'),
   release_channel: 'release',
   project_id: 'jUmZS1kp',
   file_parts: ['mtr-next-0.37.0-1.20.1-fabric.jar']
