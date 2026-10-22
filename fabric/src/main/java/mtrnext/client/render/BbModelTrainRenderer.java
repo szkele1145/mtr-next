@@ -14,7 +14,6 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -154,9 +153,11 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 
 		final Properties4xLoader.GangwayProperties props =
 				Properties4xLoader.load(manager, layer.propertiesResource);
-		// positionDefinitions：部件名（= 顶层组名）→ 正位 / 翻转位
-		final Map<String, PositionDefinitions4xLoader.PositionGroup> positions =
-				PositionDefinitions4xLoader.load(manager, layer.positionDefinitionsResource);
+		// [0.38.0] 渲染计划快照：把「type=NORMAL + 位定义名非空 + 位定义组非 null」
+		// 的过滤与位定义查表全部挪到加载期，渲染期只做遍历。
+		// 过滤规则与下方原循环的 continue 逐条对应 ⇒ 渲染输出逐字不变。
+		final LayerRenderCache plan =
+				LayerRenderCache.load(manager, layer.propertiesResource, layer.positionDefinitionsResource);
 
 		// 上游 ModelPropertiesPart.java:317 —— 闪烁是 **per-part** 的：
 		// 每条 wrapper 在 toModelPropertiesPartAndPositionDefinition 里
@@ -169,39 +170,19 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		// properties.parts[] 每条记录按自己的 names 取锚点节点，再对每个位置
 		// 渲染一次。因此同一组可被多条记录引用（ERIDU 的 men2 就有两条：
 		// 一条 +11 只走正位、一条 −11 只走翻转位），按组名折叠会丢掉一条。
-		for (final Properties4xLoader.PartInfo info : props.parts) {
-			if (!"NORMAL".equals(info.type)) {
-				continue; // DISPLAY/FLOOR/DOORWAY 不参与常规几何渲染
-			}
-			if (info.positionDefinitionNames.isEmpty()) {
-				continue; // 上游 getPositionDefinition 未被调用 → 该记录不产出几何
-			}
+		for (final LayerRenderCache.PlanPart planPart : plan.parts) {
+			final Properties4xLoader.PartInfo info = planPart.info;
 			// 上游 ModelPropertiesPart.java:339-345 —— 门行程窗口外不渲染该部件。
 			// 上游用 x/z = Integer.MAX_VALUE 把部件推离视野，而不是跳过绘制。
 			final boolean shouldRender = info.shouldRenderAt(doorValue, opening);
 			// 上游 ModelPropertiesPart.java:317 —— per-part 闪烁判定
 			final boolean flashOn = info.flashOn(now);
-			// [0.37.0] 预取位定义组：原先在 name × defName 双层循环内做
-			// positions.get(defName) 查表 ⇒ 同一 defName 被重复查 names.length 次。
-			// 这里在 name 循环外一次性解析成数组，**渲染顺序完全不变**
-			// （仍是 name-major、defName-minor），只把查表次数从
-			// names × defNames 降到 defNames。
-			final List<String> defNames = info.positionDefinitionNames;
-			final PositionDefinitions4xLoader.PositionGroup[] groups =
-					new PositionDefinitions4xLoader.PositionGroup[defNames.size()];
-			for (int d = 0; d < groups.length; d++) {
-				groups[d] = positions.get(defNames.get(d));
-			}
 			for (final String name : info.names) {
 				final ModelPart anchor = tree.groupParts.get(name);
 				if (anchor == null) {
 					continue;
 				}
-				for (int d = 0; d < groups.length; d++) {
-					final PositionDefinitions4xLoader.PositionGroup group = groups[d];
-					if (group == null) {
-						continue;
-					}
+				for (final PositionDefinitions4xLoader.PositionGroup group : planPart.groups) {
 					for (final float[] p : group.positions) {
 						drawInstance(anchor, vc, info, false, p[0], p[1], p[2], doorValue, opening, shouldRender, flashOn);
 					}

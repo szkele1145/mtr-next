@@ -23,6 +23,8 @@ public final class BbModelTreeCache {
 		BbModelTree.invalidate();
 		Properties4xLoader.invalidate();
 		PositionDefinitions4xLoader.invalidate();
+		// [0.38.0] 渲染计划快照同样跟随资源重载失效（其内容 = 上面两个数据层的产品）
+		LayerRenderCache.invalidate();
 	}
 
 	/**

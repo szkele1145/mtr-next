@@ -37,6 +37,7 @@ public final class ParserSelfTest {
 		testDoorAnimationPreparse();
 		testDoorOpeningDirection();
 		testTreeCacheKeyPrecompute();
+		testLayerRenderPlanEquivalence();
 		testUpstreamBoxRotation();
 		testDoorAnnotation();
 		testDoorOverlapDetection();
@@ -205,6 +206,202 @@ public final class ParserSelfTest {
 		final String k1 = mtrnext.pack.VehicleResource.ModelLayer.treeCacheKey("mtr:x.bbmodel", "mtr:y1.json");
 		final String k2 = mtrnext.pack.VehicleResource.ModelLayer.treeCacheKey("mtr:x.bbmodel", "mtr:y2.json");
 		check("不同 properties ⇒ 不同缓存键（防串 modelYOffset）", !k1.equals(k2));
+	}
+
+	/**
+	 * [0.38.0] 渲染计划快照（{@code LayerRenderCache}）与旧渲染循环的<b>逐字等价</b>。
+	 * <p>
+	 * 旧实现（0.37.0）每帧每 NORMAL 部件：
+	 * <pre>
+	 * for (info : props.parts) {
+	 *     if (!"NORMAL".equals(info.type)) continue;
+	 *     if (info.positionDefinitionNames.isEmpty()) continue;
+	 *     groups = new PositionGroup[defNames.size()];   // ← 每帧分配
+	 *     for (d) groups[d] = positions.get(defNames.get(d));
+	 *     for (name : info.names)
+	 *         for (d) { group = groups[d]; if (group == null) continue;
+	 *             for (p : group.positions)        draw(..., false, p);
+	 *             for (p : group.positionsFlipped) draw(..., true, -p.x, p.y, p.z); }
+	 * }
+	 * </pre>
+	 * 新实现把「过滤 + 查表」挪到加载期。必须证明<b>绘制序列完全一致</b>。
+	 * <p>
+	 * 本测试用两个独立实现产出「绘制指令序列」并逐条比对：
+	 * <ul>
+	 *   <li>legacy：把 0.37.0 的循环<b>原样照抄</b>（含 null group 的 continue）；</li>
+	 *   <li>planned：走 {@code LayerRenderCache.build} 后的新遍历。</li>
+	 * </ul>
+	 * 覆盖：正常部件 / 非 NORMAL 部件 / 无位定义部件 / 位定义名查不到 /
+	 * 部分查得到（null 与非 null 混合）/ 同一组被多条记录引用 /
+	 * positions 与 positionsFlipped 同时存在 / 空 parts / null 输入。
+	 */
+	private static void testLayerRenderPlanEquivalence() {
+		System.out.println("[0.38.0 渲染计划快照 vs 旧循环：绘制序列逐条等价]");
+
+		final String[][] cases = {
+				// {propertiesJson, definitionsJson}
+				{
+						"{\"parts\":[{\"type\":\"NORMAL\",\"names\":[\"g1\"],\"positionDefinitions\":[\"d1\"]}]}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}"
+				},
+				{
+						// 非 NORMAL 部件应被跳过
+						"{\"parts\":[{\"type\":\"DOORWAY\",\"names\":[\"g1\"],\"positionDefinitions\":[\"d1\"]}]}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}"
+				},
+				{
+						// 无位定义名 → 跳过
+						"{\"parts\":[{\"type\":\"NORMAL\",\"names\":[\"g1\"]}]}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}"
+				},
+				{
+						// 位定义名查不到 → 跳过
+						"{\"parts\":[{\"type\":\"NORMAL\",\"names\":[\"g1\"],\"positionDefinitions\":[\"nope\"]}]}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}"
+				},
+				{
+						// null 与非 null 混合（查表部分命中）
+						"{\"parts\":[{\"type\":\"NORMAL\",\"names\":[\"g1\"],\"positionDefinitions\":[\"d1\",\"missing\"]}]}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}"
+				},
+				{
+						// positions + positionsFlipped 同时存在
+						"{\"parts\":[{\"type\":\"NORMAL\",\"names\":[\"g1\"],\"positionDefinitions\":[\"d1\"]}]}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3},{\"x\":4,\"y\":5,\"z\":6}],"
+								+ "\"positionsFlipped\":[{\"x\":7,\"y\":8,\"z\":9}]}]}"
+				},
+				{
+						// 多个部件 + 多个 names + 多个位定义（顺序敏感）
+						"{\"parts\":["
+								+ "{\"type\":\"NORMAL\",\"names\":[\"gA\",\"gB\"],\"positionDefinitions\":[\"d1\",\"d2\"]},"
+								+ "{\"type\":\"NORMAL\",\"names\":[\"gC\"],\"positionDefinitions\":[\"d2\"]}"
+								+ "]}",
+						"{\"positionDefinitions\":["
+								+ "{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":0,\"z\":0}]}"
+								+ ",{\"name\":\"d2\",\"positions\":[{\"x\":2,\"y\":0,\"z\":0}],"
+								+ "\"positionsFlipped\":[{\"x\":3,\"y\":0,\"z\":0}]}"
+								+ "]}"
+				},
+				{
+						// 同一组被多条记录引用（ERIDU men2/men3 形态）
+						"{\"parts\":["
+								+ "{\"type\":\"NORMAL\",\"names\":[\"g1\"],\"positionDefinitions\":[\"d1\"]},"
+								+ "{\"type\":\"NORMAL\",\"names\":[\"g1\"],\"positionDefinitions\":[\"d1\"]}"
+								+ "]}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}"
+				},
+				{
+						// 空 parts
+						"{\"parts\":[]}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}"
+				},
+				{
+						// 畸形 properties（无 parts 字段）
+						"{}",
+						"{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}"
+				},
+		};
+
+		int eq = 0;
+		for (int i = 0; i < cases.length; i++) {
+			final var parts = mtrnext.client.render.Properties4xLoader.parseParts(json(cases[i][0]));
+			final var positions = mtrnext.client.render.PositionDefinitions4xLoader.parseRoot(json(cases[i][1]));
+
+			// --- 旧实现（原样照抄 0.37.0 的循环）---
+			final List<String> legacy = new ArrayList<>();
+			for (final mtrnext.client.render.Properties4xLoader.PartInfo info : parts) {
+				if (!"NORMAL".equals(info.type)) {
+					continue;
+				}
+				if (info.positionDefinitionNames.isEmpty()) {
+					continue;
+				}
+				final List<String> defNames = info.positionDefinitionNames;
+				final mtrnext.client.render.PositionDefinitions4xLoader.PositionGroup[] groups =
+						new mtrnext.client.render.PositionDefinitions4xLoader.PositionGroup[defNames.size()];
+				for (int d = 0; d < groups.length; d++) {
+					groups[d] = positions.get(defNames.get(d));
+				}
+				for (final String name : info.names) {
+					for (int d = 0; d < groups.length; d++) {
+						final mtrnext.client.render.PositionDefinitions4xLoader.PositionGroup group = groups[d];
+						if (group == null) {
+							continue;
+						}
+						for (final float[] p : group.positions) {
+							legacy.add("N:" + name + ":F:" + p[0] + "," + p[1] + "," + p[2]);
+						}
+						for (final float[] p : group.positionsFlipped) {
+							legacy.add("N:" + name + ":T:" + (-p[0]) + "," + p[1] + "," + p[2]);
+						}
+					}
+				}
+			}
+
+			// --- 新实现（走渲染计划快照）---
+			final var plan = mtrnext.client.render.LayerRenderCache.build(parts, positions);
+			final List<String> planned = new ArrayList<>();
+			for (final mtrnext.client.render.LayerRenderCache.PlanPart planPart : plan.parts) {
+				final mtrnext.client.render.Properties4xLoader.PartInfo info = planPart.info;
+				for (final String name : info.names) {
+					for (final mtrnext.client.render.PositionDefinitions4xLoader.PositionGroup group : planPart.groups) {
+						for (final float[] p : group.positions) {
+							planned.add("N:" + name + ":F:" + p[0] + "," + p[1] + "," + p[2]);
+						}
+						for (final float[] p : group.positionsFlipped) {
+							planned.add("N:" + name + ":T:" + (-p[0]) + "," + p[1] + "," + p[2]);
+						}
+					}
+				}
+			}
+
+			if (legacy.equals(planned)) {
+				eq++;
+			} else {
+				System.out.println("  FAIL 用例 " + i + " 不等价");
+				System.out.println("    legacy  = " + legacy);
+				System.out.println("    planned = " + planned);
+			}
+		}
+		check("渲染计划快照与旧循环绘制序列逐条等价（" + eq + "/" + cases.length + " 用例）", eq == cases.length);
+
+		// 计划快照不应保留空组部件（全 null 时应被滤掉）
+		final var emptyPlan = mtrnext.client.render.LayerRenderCache.build(
+				mtrnext.client.render.Properties4xLoader.parseParts(
+						json("{\"parts\":[{\"type\":\"NORMAL\",\"names\":[\"g1\"],\"positionDefinitions\":[\"nope\"]}]}")),
+				mtrnext.client.render.PositionDefinitions4xLoader.parseRoot(
+						json("{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}")));
+		check("全 null 位定义组的部件被预过滤（0 个计划部件）", emptyPlan.parts.isEmpty());
+
+		// null 输入不崩
+		boolean nullSafe = true;
+		try {
+			mtrnext.client.render.LayerRenderCache.build(null, null);
+			mtrnext.client.render.LayerRenderCache.build(
+					mtrnext.client.render.Properties4xLoader.parseParts(json("{\"parts\":[]}")), null);
+		} catch (final Throwable t) {
+			nullSafe = false;
+			System.out.println("  FAIL null 输入抛异常: " + t);
+		}
+		check("null 输入不抛异常", nullSafe);
+
+		// 计划列表不可变（防止渲染期被误改）
+		boolean immutable = true;
+		try {
+			mtrnext.client.render.LayerRenderCache.build(
+					mtrnext.client.render.Properties4xLoader.parseParts(
+							json("{\"parts\":[{\"type\":\"NORMAL\",\"names\":[\"g1\"],\"positionDefinitions\":[\"d1\"]}]}")),
+					mtrnext.client.render.PositionDefinitions4xLoader.parseRoot(
+							json("{\"positionDefinitions\":[{\"name\":\"d1\",\"positions\":[{\"x\":1,\"y\":2,\"z\":3}]}]}")))
+					.parts.add(null);
+			immutable = false;
+		} catch (final UnsupportedOperationException expected) {
+			// 预期：不可变
+		} catch (final Throwable t) {
+			immutable = false;
+			System.out.println("  FAIL 不可变性检查异常类型异常: " + t);
+		}
+		check("计划部件列表不可变", immutable);
 	}
 
 	/**

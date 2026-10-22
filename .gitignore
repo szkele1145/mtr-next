@@ -6,3 +6,6 @@ out/
 *.iml
 vibe coding工程/
 logs/
+
+# 构建日志
+build-*.log

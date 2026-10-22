@@ -78,8 +78,9 @@ public final class FormationPreviewRenderer {
 
 			final Properties4xLoader.GangwayProperties props =
 					Properties4xLoader.load(manager, layer.propertiesResource);
-			final Map<String, PositionDefinitions4xLoader.PositionGroup> positions =
-					PositionDefinitions4xLoader.load(manager, layer.positionDefinitionsResource);
+			// [0.38.0] 渲染计划快照（过滤 + 位定义查表在加载期完成；渲染输出不变）
+			final LayerRenderCache plan = LayerRenderCache.load(
+					manager, layer.propertiesResource, layer.positionDefinitionsResource);
 
 			// 预览态：门完全打开（门开度 1.0，方向 opening=true），
 			// 与上游 renderNormal 在「门全开」时的取值一致。
@@ -87,34 +88,20 @@ public final class FormationPreviewRenderer {
 			final boolean previewOpening = true;
 			final long now = System.currentTimeMillis();
 
-			for (final Properties4xLoader.PartInfo info : props.parts) {
-				if (!"NORMAL".equals(info.type) || info.positionDefinitionNames.isEmpty()) {
-					continue;
-				}
+			for (final LayerRenderCache.PlanPart planPart : plan.parts) {
+				final Properties4xLoader.PartInfo info = planPart.info;
 				// 上游 ModelPropertiesPart.java:339-345：门行程窗口外不渲染
 				final boolean shouldRender = info.shouldRenderAt(previewDoorValue, previewOpening);
 				// 上游 ModelPropertiesPart.java:317：闪烁是 per-part 的
 				// （每条 wrapper 传自己的 flashOnTime/flashOffTime 给新建的
 				//  ModelPropertiesPart 实例，见 ModelPropertiesPartWrapper.java:80-105）
 				final boolean flashOn = info.flashOn(now);
-				// [0.37.0] 预取位定义组（查表次数从 names × defNames 降到 defNames；
-				// 渲染顺序 name-major / defName-minor **不变**）
-				final java.util.List<String> defNames = info.positionDefinitionNames;
-				final PositionDefinitions4xLoader.PositionGroup[] groups =
-						new PositionDefinitions4xLoader.PositionGroup[defNames.size()];
-				for (int d = 0; d < groups.length; d++) {
-					groups[d] = positions.get(defNames.get(d));
-				}
 				for (final String name : info.names) {
 					final ModelPart anchor = tree.groupParts.get(name);
 					if (anchor == null) {
 						continue;
 					}
-					for (int d = 0; d < groups.length; d++) {
-						final PositionDefinitions4xLoader.PositionGroup group = groups[d];
-						if (group == null) {
-							continue;
-						}
+					for (final PositionDefinitions4xLoader.PositionGroup group : planPart.groups) {
 						// 预览：门按完全打开取值（time=1）
 						for (final float[] p : group.positions) {
 							drawInstance(poseStack, vc, anchor, info, false, p[0], p[1], p[2], shouldRender, flashOn);

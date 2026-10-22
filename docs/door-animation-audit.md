@@ -835,3 +835,79 @@ mtr-next 在 `Element.upstreamBox()` 里做归一化（min/max 排序），
 - `parserSelfTest` **PASS=270 FAIL=0**（0.36.7 为 263，+7）；
 - `bbModelTreeTest` PASS=46 FAIL=0；
 - 构建 0 错误。
+
+---
+
+## 五j、0.37.0 + 0.38.0：渲染热路径清理（渲染序列逐字不变）（2026-10-22）
+
+这两版都**不改变门动画语义，也不改变绘制顺序** —— 只把「与帧无关」的工作
+从渲染期挪到加载期。
+
+### 0.37.0：位定义查表从「双层循环内」提到「循环外」
+
+旧循环结构：
+
+```
+for info in properties.parts[]:                   <- 部件记录
+  for name in info.names:                         <- 组名
+    for defName in info.positionDefinitionNames:  <- 位定义名
+      group = positions.get(defName)               <- 查表
+```
+
+`positions.get(defName)` 的结果**与 `name` 无关**（同一 `info` 的所有组名共用
+同一批位定义），却在 `name` 循环里被**重复查了 `names.length` 次**
+⇒ 查表次数 `names × defNames` ⇒ **`defNames`**。
+
+★ 渲染顺序完全不变：仍是 name-major / defName-minor。
+
+### 0.38.0：渲染计划快照（`LayerRenderCache`）
+
+0.37.0 之后仍有一处**每帧分配**：查表虽然提到了循环外，但
+
+```java
+final PositionGroup[] groups = new PositionGroup[defNames.size()];
+```
+
+**每个 NORMAL 部件每帧 new 一次**。
+
+0.38.0 新增 `LayerRenderCache`（`client/render/LayerRenderCache.java`）：
+
+| 项 | 值 |
+|---|---|
+| 缓存键 | `propertiesResource + "\|" + positionDefinitionsResource` |
+| 失效钩子 | `BbModelTreeCache.invalidate()`（资源重载时整体清空） |
+| 内容 | 只含会产出几何的部件 + 预解析好的位定义组数组 |
+| 渲染期成本 | **零查表、零分配** |
+
+**为什么是独立缓存而不是塞进 `VehicleResource.ModelLayer`**：
+车包对象（ModelLayer）可能跨资源重载存活，而 positionDefinitions 的内容跟随
+资源重载变化 ⇒ 塞进 ModelLayer 会拿到过期引用。
+
+**过滤规则与旧循环的 `continue` 逐条对应**（这是「输出不变」的依据）：
+
+| 旧循环的 continue | 新 build 的过滤 | 等价性依据 |
+|---|---|---|
+| `!"NORMAL".equals(info.type)` | 跳过该部件 | 逐字相同 |
+| `info.positionDefinitionNames.isEmpty()` | 跳过该部件 | 逐字相同 |
+| `group == null`（在 name 循环**内**） | 预过滤掉该 group | null group 对任何 name 都画不出东西 ⇒ 等价 |
+| 全部 group 都为 null | 跳过该部件 | 原循环对每个 name 都空转 ⇒ 等价 |
+
+### 等价性回归测试
+
+`testLayerRenderPlanEquivalence`（`ParserSelfTest`）把 0.37.0 的旧循环
+**原样照抄**为参照实现，与新的快照遍历对**同一输入**产出
+「绘制指令序列」（`N:<组名>:F|T:<x>,<y>,<z>`）**逐条比对**。
+
+覆盖 10 组用例：正常部件 / 非 NORMAL / 无位定义 / 位定义查不到 /
+null 与非 null 混合 / positions+positionsFlipped 并存 / 多部件多组名多定义 /
+同一组被多条记录引用（ERIDU `men2` 形态）/ 空 parts / 畸形输入，
+另含 null 安全与列表不可变断言。
+
+### 验证
+
+- `parserSelfTest` **PASS=282 FAIL=0**（0.37.0 为 278，+4）；
+- `bbModelTreeTest` PASS=46 FAIL=0；
+- 构建 0 错误。
+
+> ⚠️ 与 0.36.7 / 0.36.8 / 0.36.9 / 0.37.0 同属**无客户端图形验证**的改动 ——
+> 逻辑等价性已用回归测试锁死，但「渲染出来真的没变」仍需图形客户端肉眼确认。
