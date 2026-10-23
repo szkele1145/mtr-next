@@ -199,4 +199,30 @@ gangway/barrier 是**程序化几何**（宽高 + 偏移 + 六向贴图），不
   **已闭合（2026-10-21）**：见上方「优化渲染路径」条目。
   证据：`docs/_upstream/binary-evidence/optimized-model-addcube-4.0.6/README.md`。
   （**仍待查**：上游何时启用优化渲染的资源包侧开关、`addCube` 的调用点。）
-- s700 有 10 个元素 `mirror_uv=true` 但 `west=swapped`（疑似 UV 区域重叠的重复件）—— **仍未查**。
+- ~~s700 有 10 个元素 `mirror_uv=true` 但 `west=swapped`（疑似 UV 区域重叠的重复件）~~ ——
+  **已闭合（2026-10-23）：不是缺陷，且原文的「10 个」是错的。**
+
+  实测（`tools/upstream_s700.bbmodel`，315 个元素）：
+
+  | 项 | 实测值 |
+  |---|---|
+  | `mirror_uv=true` 的元素 | **88 个**（不是 10 个） |
+  | `shade=false` 的元素 | **0 个** ⇒ 实际 mirror 标志 `!shade \|\| mirror_uv` = 88 个 |
+  | 这 88 个里 `west` 面 `u1>u2`（含退化，55 与 55 相同） | **55 个** |
+  | **`west` 倒序 但 `mirror_uv=false` 的元素** | **0 个** |
+  | 几何完全重复（`from`/`to`/`uv_offset` 全同）的元素组 | **0 组** |
+
+  三条判据：
+
+  1. **「重复件」假设被推翻**：`from`/`to`/`uv_offset` 完全相同的元素组数为 **0**。
+  2. **倒序 UV 与 mirror 完全相关**：227 个非 mirror 元素里**没有**任何一面倒序
+     ⇒ 倒序 per-face UV 是 Blockbench 给「镜像元素」的编码方式，不是数据损坏。
+  3. **per-face UV 根本不参与渲染**：上游 `BlockbenchElement.setModelPart` 只取
+     `uv_offset` 调 `addCuboid(..., !shade || mirror_uv)`；mtr-next
+     `BbModelTree.java:646-664` 同样只读 `uv_offset` 并 `.mirror(!shade || mirrorUv)`。
+     两边都**没有任何地方读取 `faces.*.uv`**
+     （已 grep 全量源码确证；MC 的 `addBox` 由 `uv_offset` 自动展开六面）。
+     另：`uv_offset` 缺失时 mtr-next 取 `(0,0)`（`arr()` 回 `EMPTY_ARRAY` → `f()` 回 0），
+     与上游 `Utilities.getElement(uv_offset, 0, 0L)` 的默认值一致（s700 有 22 个元素无 `uv_offset`）。
+
+  ⇒ **无需改代码。** 该条从开放问题移除。
