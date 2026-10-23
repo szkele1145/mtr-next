@@ -992,3 +992,53 @@ return valueChange * (1 - (float) Math.cos(Math.PI * (time - startTime) / timeCh
 另核对 STANDARD 的入参：mtr-next 用 `smoothEnds(0, doorMax, 0.05F, 0.5F, time)`，
 与 4.0.5 `DoorAnimationType` 里反复出现的 `0.05d` / `0.5d` 常量吻合
 （注意起点是 **0.05** 而不是 0 —— 早期文档写成 `0, 0.5` 是不准确的）。
+---
+
+## 七、总结：MTR 4.0.5 真 jar 全面核对结论（2026-10-24）
+
+本轮用 **`MTR-fabric-4.0.5+1.20.1.jar`**（Modrinth `XKPAmI6u` 直接下载，
+不再是「文档/源码摘录」或「另一个版本的 jar 推断」）完成了 mtr-next 门动画
+全链路的**实证级**核对，把此前所有「上游语义为 X（推断）」的表述全部升级成
+「上游语义为 X（实测）」。
+
+### 核对清单
+
+| # | 项目 | 4.0.5 实测 | mtr-next | 结论 |
+|---|---|---|---|---|
+| 1 | `BlockbenchElementSchema.shade` 缺省 | `iconst_1 → putfield` = **true** | `null = true` | ✅ 一致 |
+| 2 | `BlockbenchElementSchema.mirror_uv` 缺省 | `iconst_0 → putfield` = **false** | `null = false` | ✅ 一致 |
+| 3 | 镜像判据 | `!shade \|\| mirror_uv`（字节码） | `mirrorFlag()` | ✅ 一致 |
+| 4 | `Vehicle.DOOR_MOVE_TIME` | `public static final int = 3200` | `3200.0` | ✅ 一致 |
+| 5 | 门运动插值 | `DoorMovementInterpolation` 中 `sipush 500` | `500ms` | ✅ 一致 |
+| 6 | `Vehicle.DOOR_DELAY` | **死常量**（无 `getstatic`、无内联字面量） | 不实现 | ✅ 正确 |
+| 7 | `isBetween(v,a,b)` | `v >= min(a,b)-tol && v <= max(a,b)+tol`（tol=0） | min/max 夹取 | ✅ 一致 |
+| 8 | `shouldRender` 窗口判定 | `(from==0 && until==0) \|\| isBetween(...)` | 同结构 | ✅ 逐字等价 |
+| 9 | `smoothEnds` 公式 | `delta*(1-cos(π·(t-c)/range))/2 + a`（严格 `<` / `>` 边界） | 同公式 | ✅ 逐字等价 |
+| 10 | `STANDARD` 起点 | `0.05F`（非 `0`） | `0.05F` | ✅ 一致（**修正了早期文档的 0**） |
+| 11 | `hasOptimizedRendering()` | **硬编码 `return true`**（4.0.x 恒开，无开关） | 不用 OptimizedModel 路径 | ✅ 不受影响 |
+| 12 | 门动画全部曲线 | **数值对拍 580608 点，0 超容差**（`tools/door-parity/`） | `DoorAnimation4x` | ✅ 完全等价 |
+
+### 推翻的既有推断
+
+1. **「资源包可开启优化渲染 ⇒ 可能门重影」**——不成立。
+   4.0.x 的 `hasOptimizedRendering()` 恒为 `true`，没有「开不开」，
+   `modelParts` 分支在上游是**死代码**。
+2. **「`@Shadow` 可见性降级会崩」**（turbo 1.1.6 的误归因）——字节码证明是
+   静默升级，不会崩。已写入 `mtr-ante/docs/mixin-visibility-semantics.md`。
+3. **「s700 有 10 个 `mirror_uv=true` 的重复元素」**——错数。
+   实测 88 个 `mirror_uv=true`、0 个 `shade:false`、0 组重复几何，非缺陷。
+
+### 新增的对拍工具
+
+- `tools/door-parity/DoorParity.java`：加载 4.0.5 真 `DoorAnimationType`
+  与 `DoorAnimation4x` 对拍。**580608 检查点 / 0 超容差 /
+  maxAbsDiff=7.63e-7 px**（float/double cast 噪音）。
+  以后改动 `DoorAnimation4x` 必跑一次，防回归。
+
+### 遗留开放问题（不隐瞒）
+
+- 「只有 bbmodel、没有 .obj 的车包在 4.0.x 里车门是否仍渲染」**仍未闭合**
+  （已确认 `PartDetails.optimizedModelDoor` 由外部供给/惰性供给，
+  追查在 `writeCache` 的两个 lambda 处主动停止——该答案不影响 mtr-next 行为）。
+- 客户端图形侧验证（渲染效果、三 mod 共存、turbo/ante 运行时）仍是
+  headless 环境的硬限制，不属于代码层可推进项。
