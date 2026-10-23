@@ -964,3 +964,31 @@ render = opening
 另外，`opening` 在字节码里来自
 `PersistentVehicleData.getAdjustedDoorMultiplier(VehicleExtraData) > 0`（offset 128-147），
 是**车辆级**的量、每帧每车厢算一次 —— 与 0.36.8 修「多车厢 opening 串味」时的结论一致。
+### 附：`smoothEnds` 的公式与边界条件也在 4.0.5 上核对过
+
+`org.mtr.mod.resource.DoorAnimationType`（4.0.5）里 `private static double smoothEnds(a, b, c, d, t)`
+的完整字节码解码：
+
+```
+ 0: if (t >= c) goto 10 else return a                    // t < startTime → a
+10: if (t <= d) goto 20 else return b                    // t > endTime   → b
+20: range = d - c
+27: delta = b - a
+32-58: delta * (1 - cos(π * (t - c) / range)) / 2 + a
+```
+
+与 mtr-next `DoorAnimation4x.smoothEnds` 的
+
+```java
+if (time < startTime) return startValue;
+if (time > endTime) return endValue;
+final float timeChange = endTime - startTime;
+final float valueChange = endValue - startValue;
+return valueChange * (1 - (float) Math.cos(Math.PI * (time - startTime) / timeChange)) / 2 + startValue;
+```
+
+**逐字等价**，包括两条边界用的是严格 `<` / `>`（不是 `<=` / `>=`）。
+
+另核对 STANDARD 的入参：mtr-next 用 `smoothEnds(0, doorMax, 0.05F, 0.5F, time)`，
+与 4.0.5 `DoorAnimationType` 里反复出现的 `0.05d` / `0.5d` 常量吻合
+（注意起点是 **0.05** 而不是 0 —— 早期文档写成 `0, 0.5` 是不准确的）。
