@@ -938,3 +938,29 @@ null 与非 null 混合 / positions+positionsFlipped 并存 / 多部件多组名
 
 ⇒ `DOOR_DELAY` 在 4.0.5 中是**声明了但从未使用的死常量**。
 mtr-next 不实现它不构成缺陷；同时也提醒：不要因为上游「有个常量」就假定它参与时序。
+### 附：`shouldRender` 的窗口判定与「0/0 短路」也在 4.0.5 上核对过
+
+`ModelPropertiesPart.lambda$renderNormal$25` 的字节码（offset 149 起）：
+
+```
+149: iload 16 ; ifeq 207            // if (opening) { … } else { 关门分支 }
+154-160: renderFromOpeningDoorTime == 0 ?  (lcmp; ifne 172)
+163-169:   renderUntilOpeningDoorTime == 0 ? → TRUE (ifeq 197)
+172-191: isBetween(|doorValue| * 3200.0, fromOpen, untilOpen)
+```
+
+即：
+
+```java
+render = opening
+    ? ((fromOpen == 0 && untilOpen == 0) || isBetween(|doorValue| * 3200, fromOpen, untilOpen))
+    : ((fromClose == 0 && untilClose == 0) || isBetween(|doorValue| * 3200, fromClose, untilClose));
+```
+
+与 mtr-next `Properties4xLoader.PartInfo.shouldRenderAt` 的
+`if (from == 0 && until == 0) return true;` + `min/max` 夹取**逐字等价**。
+（曾怀疑这条 `0/0 ⇒ true` 短路是 mtr-next 自己加的、可能偏离上游 —— **核实后确认上游就有**。）
+
+另外，`opening` 在字节码里来自
+`PersistentVehicleData.getAdjustedDoorMultiplier(VehicleExtraData) > 0`（offset 128-147），
+是**车辆级**的量、每帧每车厢算一次 —— 与 0.36.8 修「多车厢 opening 串味」时的结论一致。
