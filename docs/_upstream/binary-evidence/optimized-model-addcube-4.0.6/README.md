@@ -227,3 +227,23 @@ public static boolean hasOptimizedRendering();
 但**没有继续追到 `PartDetails` 的具体构造点**，因此
 「只有 bbmodel、没有 .obj 的车包在 4.0.x 里车门是否仍能渲染」这个问题**仍未闭合**。
 （若要闭合：javap `ModelPropertiesPart` 里 `new PartDetails` 的调用点，看第二个实参来源。）
+### 5. 子问题的追查进度（2026-10-23 追加，**主动停止追查**）
+
+`new PartDetails(...)` 在 `ModelPropertiesPart` 里只有 **2 个调用点**，都在 `writeCache` 的 lambda 中：
+
+| 调用点 | 第二个实参（`optimizedModelDoor`）来源 |
+|---|---|
+| `lambda$writeCache$12` | `InvokeDynamic #… Supplier.get()` → `checkcast OptimizedModelWrapper`（**惰性供给**） |
+| `lambda$writeCache$2` | `aload 5`（来自该 lambda 的入参） |
+
+⇒ `optimizedModelDoor` 是**由外部传入/惰性供给**的，不是在本类里从 bbmodel 现算的。
+
+**为什么停在这里**：再往下要爬 `writeCache` 的全部输入与 `VehicleResource` / `ModelResourceLoader`
+的组装顺序，才能回答「只有 bbmodel、没有 .obj 的车包是否也拿到非 null 的
+`optimizedModelDoor`」。而这个答案**不改变 mtr-next 的任何行为** ——
+本项目根本不用 `OptimizedModel` / `OptimizedRenderer`，而是把 bbmodel 直接构造成
+原生 `ModelPart` 树。为一条与自身实现无关的上游内部链路继续花时间不划算。
+
+**结论定性**：该子问题**保持开放**，但已明确「不影响本项目」，
+且已把追查起点（2 个 `PartDetails.<init>` 调用点 + 实参来源）写清楚，
+将来若真需要可以从中断处接上。
