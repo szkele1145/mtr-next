@@ -226,3 +226,21 @@ gangway/barrier 是**程序化几何**（宽高 + 偏移 + 六向贴图），不
      与上游 `Utilities.getElement(uv_offset, 0, 0L)` 的默认值一致（s700 有 22 个元素无 `uv_offset`）。
 
   ⇒ **无需改代码。** 该条从开放问题移除。
+
+- `shade` / `mirror_uv` 的**缺省值** —— **已确证（2026-10-23）**：
+
+  | 键 | 缺省 | 证据 |
+  |---|---|---|
+  | `shade` | **`true`** | `org.mtr.generated.resource.BlockbenchElementSchema` 构造器字节码：`iconst_1 → putfield shade` |
+  | `mirror_uv` | **`false`** | 同上：`iconst_0 → putfield mirror_uv` |
+
+  ⇒ 镜像判据 `!shade \|\| mirror_uv` 在**两个键都缺失时恒为 `false`**（不镜像），
+  只有显式 `shade:false` 或 `mirror_uv:true` 才镜像。mtr-next 的
+  `BbModelTree.mirrorFlag(Boolean, Boolean)`（`null` = 键缺失）与上游逐字等价，
+  并由 `testElementMirrorFlag` 的 3×3 组合交叉验证锁死。
+
+  > **版本边界（不隐瞒）**：本机只有 **MTR 4.1** 的 jar 含该 schema 类
+  > （`mtr-turbo/libs/mtr41-fabric-1211.jar`），**4.0.x 未取得**。
+  > 4.0.6 的 `BlockbenchElement` 源码（`docs/_upstream/BlockbenchElement.java` L41）
+  > 用的是同一表达式，但 4.0.x 的 schema 默认值是**推断而非实证**。
+  > 对 s700 无影响：该包 `shade:false` 的元素数为 **0**，缺省值取真取假都不改变结果。
