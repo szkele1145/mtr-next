@@ -648,10 +648,11 @@ public final class BbModelTree {
 		final int v = Math.round(f(uvOffset, 1));
 
 		final float inflate = f(element, "inflate");
-		// shade 缺省为 true；上游镜像条件 = !shade || mirror_uv
-		final boolean shade = !element.has("shade") || element.get("shade").getAsBoolean();
-		final boolean mirrorUv = element.has("mirror_uv") && element.get("mirror_uv").getAsBoolean();
-
+		// shade 缺省 true、mirror_uv 缺省 false —— 由上游 schema 构造器字节码确证
+		// （MTR 4.1 的 org.mtr.generated.resource.BlockbenchElementSchema：
+		//  iconst_1 → putfield shade，iconst_0 → putfield mirror_uv）。
+		final Boolean shade = element.has("shade") ? element.get("shade").getAsBoolean() : null;
+		final Boolean mirrorUv = element.has("mirror_uv") ? element.get("mirror_uv").getAsBoolean() : null;
 		// 上游：元素自身的 origin/rotation 追加为链的最后一节，然后从锚点
 		// 一次性建出整条链（modelYOffset 只落在第一节，即组链首节）。
 		// 元素 y 坐标额外再减一次 modelYOffset*16（BlockbenchElement L35）。
@@ -659,7 +660,7 @@ public final class BbModelTree {
 		final String cubeName = names.next();
 		final Created built = holder.child(cubeName,
 				CubeListBuilder.create()
-						.mirror(!shade || mirrorUv)
+						.mirror(mirrorFlag(shade, mirrorUv))
 						.addBox(cubeName, x, y, z, sizeX, sizeY, sizeZ,
 								new CubeDeformation(inflate), u, v),
 				PartPose.ZERO);
@@ -749,6 +750,28 @@ public final class BbModelTree {
 
 	private static JsonArray arr(JsonObject o, String key) {
 		return o.has(key) && o.get(key).isJsonArray() ? o.getAsJsonArray(key) : EMPTY_ARRAY;
+	}
+
+	/**
+	 * 元素的 cube 是否镜像 —— 与上游完全一致的判据。
+	 * <p>
+	 * 上游 {@code BlockbenchElement.setModelPart} 第 41 行：
+	 * {@code modelPart.addCuboid(..., !shade || mirror_uv)}。
+	 * <p>
+	 * 缺省值由上游 schema 的<b>构造器字节码</b>确证
+	 * （{@code org.mtr.generated.resource.BlockbenchElementSchema}，MTR 4.1 jar）：
+	 * {@code iconst_1 → putfield shade}（默认 {@code true}）、
+	 * {@code iconst_0 → putfield mirror_uv}（默认 {@code false}）。
+	 * 也就是说<b>只有显式写 {@code shade:false} 或 {@code mirror_uv:true} 才会镜像</b>，
+	 * 键缺失一律不镜像。
+	 *
+	 * @param shade    {@code shade} 的值；{@code null} 表示键缺失（按上游默认 {@code true}）
+	 * @param mirrorUv {@code mirror_uv} 的值；{@code null} 表示键缺失（按上游默认 {@code false}）
+	 */
+	public static boolean mirrorFlag(Boolean shade, Boolean mirrorUv) {
+		final boolean shadeValue = shade == null || shade;
+		final boolean mirrorUvValue = mirrorUv != null && mirrorUv;
+		return !shadeValue || mirrorUvValue;
 	}
 
 	private static float f(JsonObject o, String key) {

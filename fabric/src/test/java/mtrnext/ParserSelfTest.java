@@ -38,6 +38,7 @@ public final class ParserSelfTest {
 		testDoorOpeningDirection();
 		testTreeCacheKeyPrecompute();
 		testLayerRenderPlanEquivalence();
+		testElementMirrorFlag();
 		testUpstreamBoxRotation();
 		testDoorAnnotation();
 		testDoorOverlapDetection();
@@ -162,6 +163,62 @@ public final class ParserSelfTest {
 		final float openingValue = 0.80F;
 		check("门开度回升 → 开门中",
 				mtrnext.client.render.BbModelTrainRenderer.fallbackOpening(openingValue, 0.30F));
+	}
+
+	/**
+	 * [0.38.1] 元素 mirror 标志的**缺省语义**回归。
+	 * <p>
+	 * 上游 {@code BlockbenchElement.setModelPart} 第 41 行：
+	 * {@code addCuboid(..., !shade || mirror_uv)}。
+	 * 两个键的缺省值由上游 schema <b>构造器字节码</b>确证
+	 * （{@code org.mtr.generated.resource.BlockbenchElementSchema}，MTR 4.1 jar）：
+	 * {@code iconst_1 → putfield shade}（默认 {@code true}）、
+	 * {@code iconst_0 → putfield mirror_uv}（默认 {@code false}）。
+	 * <p>
+	 * ★ 为什么值得锁死：若把 {@code shade} 缺省想成 {@code false}，
+	 * 那么<b>所有元素</b>都会变成 {@code !false = true} ⇒ 全部镜像 ⇒
+	 * 整包贴图左右翻转，而 headless 环境看不出来（见
+	 * {@code docs/client-verification-boundary.md}）。
+	 */
+	private static void testElementMirrorFlag() {
+		System.out.println("[元素 mirror 标志缺省语义]");
+
+		final var bm = mtrnext.client.render.BbModelTree.class;
+
+		// null = 键缺失
+		check("缺省（shade 缺、mirror_uv 缺）⇒ 不镜像",
+				!mtrnext.client.render.BbModelTree.mirrorFlag(null, null));
+		check("shade=true ⇒ 不镜像",
+				!mtrnext.client.render.BbModelTree.mirrorFlag(Boolean.TRUE, null));
+		check("shade=false ⇒ 镜像",
+				mtrnext.client.render.BbModelTree.mirrorFlag(Boolean.FALSE, null));
+		check("mirror_uv=true ⇒ 镜像",
+				mtrnext.client.render.BbModelTree.mirrorFlag(null, Boolean.TRUE));
+		check("mirror_uv=false ⇒ 不镜像",
+				!mtrnext.client.render.BbModelTree.mirrorFlag(null, Boolean.FALSE));
+		check("shade=true + mirror_uv=false ⇒ 不镜像",
+				!mtrnext.client.render.BbModelTree.mirrorFlag(Boolean.TRUE, Boolean.FALSE));
+		check("shade=false + mirror_uv=false ⇒ 镜像（!shade 生效）",
+				mtrnext.client.render.BbModelTree.mirrorFlag(Boolean.FALSE, Boolean.FALSE));
+		check("shade=false + mirror_uv=true ⇒ 镜像",
+				mtrnext.client.render.BbModelTree.mirrorFlag(Boolean.FALSE, Boolean.TRUE));
+		check("shade=true + mirror_uv=true ⇒ 镜像（mirror_uv 生效）",
+				mtrnext.client.render.BbModelTree.mirrorFlag(Boolean.TRUE, Boolean.TRUE));
+
+		// 与上游表达式逐字等价（对全部 3×3 组合交叉验证）
+		Boolean[] tri = {null, Boolean.TRUE, Boolean.FALSE};
+		int mismatch = 0;
+		for (Boolean s : tri) {
+			for (Boolean m : tri) {
+				final boolean upstreamShade = s == null || s;
+				final boolean upstreamMirrorUv = m != null && m;
+				final boolean upstream = !upstreamShade || upstreamMirrorUv;
+				if (mtrnext.client.render.BbModelTree.mirrorFlag(s, m) != upstream) {
+					mismatch++;
+				}
+			}
+		}
+		check("9 种组合与上游 `!shade || mirror_uv` 全部一致", mismatch == 0);
 	}
 
 	/**
