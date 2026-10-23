@@ -759,7 +759,7 @@ public final class BbModelTree {
 	 * {@code modelPart.addCuboid(..., !shade || mirror_uv)}。
 	 * <p>
 	 * 缺省值由上游 schema 的<b>构造器字节码</b>确证
-	 * （{@code org.mtr.generated.resource.BlockbenchElementSchema}，MTR 4.1 jar）：
+	 * （{@code org.mtr.mod.generated.resource.BlockbenchElementSchema}，MTR 4.0.5 jar；4.1 的 {@code org.mtr.generated.resource} 同构，已两边实测）：
 	 * {@code iconst_1 → putfield shade}（默认 {@code true}）、
 	 * {@code iconst_0 → putfield mirror_uv}（默认 {@code false}）。
 	 * 也就是说<b>只有显式写 {@code shade:false} 或 {@code mirror_uv:true} 才会镜像</b>，

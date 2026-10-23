@@ -239,8 +239,15 @@ gangway/barrier 是**程序化几何**（宽高 + 偏移 + 六向贴图），不
   `BbModelTree.mirrorFlag(Boolean, Boolean)`（`null` = 键缺失）与上游逐字等价，
   并由 `testElementMirrorFlag` 的 3×3 组合交叉验证锁死。
 
-  > **版本边界（不隐瞒）**：本机只有 **MTR 4.1** 的 jar 含该 schema 类
-  > （`mtr-turbo/libs/mtr41-fabric-1211.jar`），**4.0.x 未取得**。
-  > 4.0.6 的 `BlockbenchElement` 源码（`docs/_upstream/BlockbenchElement.java` L41）
-  > 用的是同一表达式，但 4.0.x 的 schema 默认值是**推断而非实证**。
-  > 对 s700 无影响：该包 `shade:false` 的元素数为 **0**，缺省值取真取假都不改变结果。
+  **版本边界已闭合（2026-10-23）**：原记录写「4.0.x 未取得，默认为推断」——
+  现已在 **MTR 4.0.5 fabric 1.20.1**（`MTR-fabric-4.0.5+1.20.1.jar`，
+  Modrinth `XKPAmI6u` 直接下载）上实测，与 4.1 **完全一致**：
+
+  | 证据 | 4.0.5 | 4.1 |
+  |---|---|---|
+  | `BlockbenchElementSchema` 类路径 | `org.mtr.mod.generated.resource` | `org.mtr.generated.resource` |
+  | 构造器 `shade` 默认 | `iconst_1 → putfield shade`（true） | 同 |
+  | 构造器 `mirror_uv` 默认 | `iconst_0 → putfield mirror_uv`（false） | 同 |
+  | `setModelPart` 镜像判据 | `getfield shade; ifeq →; getfield mirror_uv; ifeq →` = `!shade \|\| mirror_uv` | 同 |
+
+  ⇒ mtr-next 对标的 **4.0.x** 与 4.1 在该判据上无差异，`mirrorFlag` 的语义有实证支撑。
