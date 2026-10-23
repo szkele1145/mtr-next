@@ -911,3 +911,30 @@ null 与非 null 混合 / positions+positionsFlipped 并存 / 多部件多组名
 
 > ⚠️ 与 0.36.7 / 0.36.8 / 0.36.9 / 0.37.0 同属**无客户端图形验证**的改动 ——
 > 逻辑等价性已用回归测试锁死，但「渲染出来真的没变」仍需图形客户端肉眼确认。
+
+---
+
+## 六、关键数值常量与 MTR 4.0.5 的逐项核对（2026-10-23）
+
+用 **MTR 4.0.5 fabric 1.20.1**（`MTR-fabric-4.0.5+1.20.1.jar`，Modrinth `XKPAmI6u`）
+直接反编译核对，而不是依赖 4.0.6 的源码摘录：
+
+| 常量 | 上游 4.0.5 实测 | mtr-next | 一致？ |
+|---|---|---|---|
+| `Vehicle.DOOR_MOVE_TIME` | `public static final int = 3200` | `Properties4xLoader.DOOR_MOVE_TIME = 3200.0` | ✅ |
+| 门运动插值时长 | `PersistentVehicleData$DoorMovementInterpolation` 里 `sipush 500` | 500 ms 线性插值 | ✅ |
+
+### `Vehicle.DOOR_DELAY = 1000` —— **4.0.5 里是死常量，mtr-next 不实现是对的**
+
+`Vehicle` 有一个 `private static final int DOOR_DELAY = 1000`，`Lift` 里也有一个同名常量。
+初看像是 mtr-next 漏了一条时序，逐项验证后**否定了这个猜想**：
+
+1. 全 jar 扫描字符串 `DOOR_DELAY`：只出现在 `Vehicle.class` 与 `Lift.class`（各自是字段声明）。
+2. `javap -c` 两个类（含全部 lambda 合成方法）→ **没有一处 `getstatic DOOR_DELAY`**。
+3. ⚠️ 关键陷阱：`private static final int` 是**编译期常量**，javac 会在使用点**内联**，
+   所以「没有 `getstatic`」**不足以**证明未使用。于是又搜了内联后的字面量
+   `sipush 1000` / `ldc 1000` —— **两个类都没有**。
+4. 该 jar 里再无其他 class 引用这个名字。
+
+⇒ `DOOR_DELAY` 在 4.0.5 中是**声明了但从未使用的死常量**。
+mtr-next 不实现它不构成缺陷；同时也提醒：不要因为上游「有个常量」就假定它参与时序。
