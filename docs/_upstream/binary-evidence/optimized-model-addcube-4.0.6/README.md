@@ -169,3 +169,61 @@ public void render(GraphicsHolder, float, float, float, float, int, int); // 带
   的优化开关判定逻辑。**不猜**。
 - `MaterialGroup.addCube` 的**调用点**（谁在什么条件下调用它、传什么 x/y/z）——
   在 `OptimizedModel.class` 与渲染侧，本次未展开反汇编。**不猜**。
+
+---
+
+## 追加（2026-10-23）：优化渲染在 4.0.x 里**恒开**，没有资源包开关
+
+原记录留了一个开放问题：「上游何时启用优化渲染的资源包侧开关」。
+在 **MTR 4.0.5 fabric 1.20.1**（`MTR-fabric-4.0.5+1.20.1.jar`，Modrinth `XKPAmI6u` 下载）上实测：
+
+### 1. `OptimizedRenderer.hasOptimizedRendering()` 硬编码返回 true
+
+```
+public static boolean hasOptimizedRendering();
+  Code:
+   0: iconst_1
+   1: ireturn
+```
+
+**没有字段、没有配置读取、没有资源包检查** —— 就是 `return true`。
+（4.1 里 `OptimizedRenderer` 整个类已被移除，所以这是 4.0.x 的特征。）
+
+### 2. 因此 `renderNormal` 的 `modelParts` 分支是死代码
+
+`ModelPropertiesPart.lambda$renderNormal$25` 的字节码结构：
+
+```
+354: invokestatic  OptimizedRenderer.hasOptimizedRendering()Z
+357: ifeq 445                          // 若为 false → 445（走 modelParts 分支）
+360-364: <某 list>.isEmpty() / ifne 470
+367-372: getfield PartDetails.optimizedModelDoor
+372: ifnull 470                       // optimizedModelDoor 为 null → 直接 return
+425-434: OptimizedRendererWrapper.queue(optimizedModelDoor, ...)
+442: goto 470                         // 画完 → return
+445: getfield PartDetails.modelParts  // ← 只有 hasOptimizedRendering()==false 才到这里
+467: ObjectArrayList.forEach(lambda$renderNormal$24)
+470: return
+```
+
+因为 354 恒为 `true`，**445 那段 `modelParts` 渲染在 4.0.x 永远不会执行**。
+
+### 3. 对 mtr-next 的含义
+
+- mtr-next **不使用** `OptimizedModel` / `OptimizedRenderer`，它直接把 bbmodel 构造成原生
+  `ModelPart` 树并用 `addBox` 渲染 ⇒ 上述「恒开」**不影响 mtr-next**。
+- 但它解释了为什么「mtr-next 与上游等价」的论证必须以 `addCube` 的语义
+  （**只合并顶点批次，不改变几何**，见本目录另一份实证）为准，
+  而不能拿 `modelParts` 分支去做对照 —— 那条路在上游是死的。
+- 也意味着：本项目此前记录的「资源包开启优化渲染时可能出现门重影」
+  这个**前提不成立** —— 4.0.x 没有「开不开」这回事，它一直是开的。
+  重影风险的真正条件不是「资源包开关」，而是 `optimizedModelDoor` 与 `modelParts`
+  是否同时存在且语义不同；那属于上游内部一致性问题，与 mtr-next 无关。
+
+### 4. 仍未追到底的一点（如实记录）
+
+`PartDetails.optimizedModelDoor` 是 `final` 构造器参数。已确认
+`OptimizedModelWrapper` 由 `ObjectResource`（.obj 资源）与 `ModelResourceLoader` 构造，
+但**没有继续追到 `PartDetails` 的具体构造点**，因此
+「只有 bbmodel、没有 .obj 的车包在 4.0.x 里车门是否仍能渲染」这个问题**仍未闭合**。
+（若要闭合：javap `ModelPropertiesPart` 里 `new PartDetails` 的调用点，看第二个实参来源。）
