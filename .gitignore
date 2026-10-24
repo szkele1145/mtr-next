@@ -4,11 +4,8 @@ run*/
 out/
 .idea/
 *.iml
-vibe codingï¿½ï¿½ï¿½ï¿½/
+vibe coding¹¤³Ì/
 logs/
 
-# ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö¾
+# ¹¹½¨ÈÕÖ¾
 build-*.log
-runclient-*.log
-run/logs/
-run/crash-reports/
