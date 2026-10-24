@@ -2,7 +2,10 @@ package mtrnext.mixin;
 
 import mtrnext.MtrNext;
 import mtrnext.client.PreviewState;
+import mtr.entity.EntitySeat;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -53,8 +56,23 @@ public abstract class RenderTrainsPreviewMixin {
 	//    mtr-next.refmap.json；运行时 mixin 系统经 refmap 还原成 intermediary
 	//    描述符，与生产 YMTR 字面签名精确命中。EntitySeat 是 YMTR 自有类，
 	//    非 net/minecraft 前缀不被重映射，两空间一致，无桥接风险。
+	//
+	// ★ [0.38.1 真机修复] handler 参数**不能**用 Object 占位。
+	//   0.36.7 在真实客户端（212 mod）启动即崩：
+	//     InvalidInjectionException: Invalid descriptor on mtr-next.mixins.json:RenderTrainsPreviewMixin
+	//       Expected (Lmtr/entity/EntitySeat;FLnet/minecraft/class_4587;Lnet/minecraft/class_4597;CallbackInfo;)V
+	//       but found (Ljava/lang/Object;FLjava/lang/Object;Ljava/lang/Object;CallbackInfo;)V
+	//   机理：Mixin 校验 handler 的**实际字节码描述符**与 target 描述符是否**逐字相等**。
+	//   remap=true 会把 target 描述符经 refmap 还原成 intermediary；handler 描述符虽也
+	//   被 remap，但 java.lang.Object **不在 mappings 里** ⇒ remap 后仍是 Ljava/lang/Object;
+	//   ⇒ 永不匹配。handler 参数必须写**精确类型**（EntitySeat / PoseStack /
+	//   MultiBufferSource），让 refmap 把它们映射成 intermediary 名。
+	//   ★ 为什么静态审计查不出来：字节码审计只看「引用的成员是否存在」，而
+	//   (Object,float,Object,Object,CallbackInfo) 本身是**合法**字节码 —— 只有真正
+	//   跑一次 Mixin 变换才会暴露描述符不匹配。
+	//   ⇒ 任何 mixin 改动后必须真机 runClient 验证。
 	@Inject(method = "render(Lmtr/entity/EntitySeat;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V", at = @At("RETURN"), remap = true)
-	private static void mtrnext$renderRailPreview(Object entity, float tickDelta, Object matrixStack, Object vertexConsumerProvider, CallbackInfo ci) {
+	private static void mtrnext$renderRailPreview(EntitySeat entity, float tickDelta, PoseStack matrixStack, MultiBufferSource vertexConsumerProvider, CallbackInfo ci) {
 		try {
 			final Minecraft mc = Minecraft.getInstance();
 			if (mc.player == null || mc.level == null || mc.hitResult == null) {
