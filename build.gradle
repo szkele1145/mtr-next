@@ -1,0 +1,134 @@
+plugins {
+	// 与 mtr-turbo 相同的兼容矩阵：loom 1.9.2 + Gradle 8.11
+	id 'fabric-loom' version '1.9.2'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+	archivesName = "mtr-next-4to3-car-${project.mod_version}-1.20.1-fabric"
+}
+
+repositories {
+	maven {
+		name = "Tencent"
+		url = "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/"
+	}
+	maven {
+		name = "Fabric"
+		url = "https://maven.fabricmc.net/"
+	}
+	maven {
+		name = "Architectury"
+		url = "https://maven.architectury.dev/"
+	}
+	mavenCentral()
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:1.20.1"
+	mappings loom.layered() {
+		officialMojangMappings()
+	}
+	// YMTR 3.6.4.2 作为编译目标与运行时依赖（MTR Next 挂钩其 mtr.* 类）
+	modImplementation files("libs/ymtr-fabric-1.20.1.jar")
+	modImplementation "net.fabricmc:fabric-loader:0.16.13"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:0.92.2+1.20.1"
+	modRuntimeOnly files("libs/ymtr-fabric-1.20.1.jar")
+	modRuntimeOnly "dev.architectury:architectury-fabric:9.2.14"
+}
+
+loom {
+	mixin {
+		defaultRefmapName = "mtr-next-4to3-car.refmap.json"
+	}
+}
+
+// 产物命名规范（继承 mtr-turbo 纪律）：mtr-next-<modver>-<mcver>-<loader>.jar
+tasks.named('remapJar') {
+	archiveFileName = "mtr-next-4to3-car-${project.mod_version}-1.20.1-fabric.jar"
+}
+tasks.named('jar') {
+	archiveFileName = "mtr-next-4to3-car-${project.mod_version}-1.20.1-fabric-dev.jar"
+}
+
+processResources {
+	inputs.property "version", project.version
+	filesMatching("fabric.mod.json") {
+		expand "version": project.version
+	}
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_17
+	targetCompatibility = JavaVersion.VERSION_17
+}
+
+sourceSets {
+	main {
+		java {
+			srcDir 'fabric/src/main/java'
+		}
+		resources {
+			srcDir 'fabric/src/main/resources'
+		}
+	}
+	test {
+		java {
+			srcDir 'fabric/src/test/java'
+		}
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = "UTF-8"
+	options.release = 17
+	// ★ [0.38.4] 让 javac 的诊断真正显示出来。
+	// 此前 gradle 用「in-process compilation」且把 DiagnosticListener 的输出吞掉，
+	// 编译失败只剩 "> Task :compileJava FAILED" 一行 —— 排查只能靠猜。
+	// forkOptions + -Xdiags:verbose 让 javac 独立进程输出完整诊断。
+	options.fork = true
+	options.forkOptions.memoryMaximumSize = '2g'
+	options.compilerArgs += ['-Xdiags:verbose', '-Xmaxerrs', '50']
+}
+
+// [0.31] 解析层离线自测：不依赖 JUnit / 不启动客户端，
+// 直接跑 fabric/src/test/java/mtrnext/ParserSelfTest。
+// 覆盖 docs/client-verification-boundary.md 里唯一可无头回归的部分：
+// sound.cfg 解析、csv 调速表插值、编组连接面规则。
+tasks.register('parserSelfTest', JavaExec) {
+	group = 'verification'
+	description = '离线解析层自测（sound.cfg / 调速表 / 编组规则）'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'mtrnext.ParserSelfTest'
+}
+
+// [0.36.0] 原生模型树自测：验证 bbmodel → MC ModelPart 树的构造语义
+// （组链 pivot 差分 / 元素旋转 / box-UV 布局 / mirror 标志 / modelYOffset）。
+// 依赖 MC classpath（ModelPart），但不需要客户端与图形环境。
+tasks.register('bbModelTreeTest', JavaExec) {
+	group = 'verification'
+	description = '原生模型树自测（bbmodel → ModelPart 构造语义）'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'mtrnext.BbModelTreeTest'
+	// 两个 JavaExec 共享 runtimeClasspath；并发启动时可能互相踩到对方的
+	// classloader（实测偶发 NoClassDefFoundError）。串行化以保证稳定。
+	mustRunAfter tasks.named('parserSelfTest')
+}
+
+tasks.register('printCp') {
+	doLast { println sourceSets.main.compileClasspath.asPath }
+}
+
+// [0.62.0] 方法 A 对拍：4.0 原文公式 vs mtr-next BbModelTree，逐元素比 cube 世界位置。
+tasks.register('bbPivotCrossCheck', JavaExec) {
+	group = 'verification'
+	description = '4.0 逐字重算 vs BbModelTree 的 pivot 对拍（离线）'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'mtrnext.UpstreamCrossCheck'
+	if (project.hasProperty('bbmodel')) {
+		args project.property('bbmodel')
+	}
+	mustRunAfter tasks.named('bbModelTreeTest')
+}

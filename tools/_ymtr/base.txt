@@ -1,0 +1,325 @@
+﻿Compiled from "TrainRendererBase.java"
+public abstract class mtr.render.TrainRendererBase {
+  protected static net.minecraft.class_4184 camera;
+
+  protected static net.minecraft.class_1937 world;
+
+  protected static float lastFrameDuration;
+
+  protected static net.minecraft.class_4587 matrices;
+
+  protected static net.minecraft.class_4597 vertexConsumers;
+
+  protected static boolean isTranslucentBatch;
+
+  private static net.minecraft.class_1297 cameraEntity;
+
+  private static boolean hasEntity;
+
+  private static double entityX;
+
+  private static double entityY;
+
+  private static double entityZ;
+
+  private static net.minecraft.class_898 entityRenderDispatcher;
+
+  private static net.minecraft.class_746 player;
+
+  private static net.minecraft.class_243 playerEyePosition;
+
+  private static boolean flipActive;
+
+  private static final float FLIP_THRESHOLD_UP;
+
+  private static final float FLIP_THRESHOLD_DOWN;
+
+  public mtr.render.TrainRendererBase();
+    Code:
+       0: aload_0
+       1: invokespecial #39                 // Method java/lang/Object."<init>":()V
+       4: return
+
+  public abstract mtr.render.TrainRendererBase createTrainInstance(mtr.data.TrainClient);
+
+  public abstract void renderCar(int, double, double, double, float, float, boolean, boolean);
+
+  public abstract void renderConnection(net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, double, double, double, float, float);
+
+  public abstract void renderBarrier(net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, double, double, double, float, float);
+
+  public static void renderRidingPlayer(net.minecraft.class_243, java.util.UUID, net.minecraft.class_243);
+    Code:
+       0: aload_0
+       1: aload_2
+       2: getfield      #58                 // Field net/minecraft/class_243.field_1352:D
+       5: aload_2
+       6: getfield      #61                 // Field net/minecraft/class_243.field_1351:D
+       9: aload_2
+      10: getfield      #64                 // Field net/minecraft/class_243.field_1350:D
+      13: invokestatic  #68                 // Method applyAverageTransform:(Lnet/minecraft/class_243;DDD)Lnet/minecraft/class_2338;
+      16: astore_3
+      17: aload_3
+      18: ifnonnull     22
+      21: return
+      22: getstatic     #72                 // Field matrices:Lnet/minecraft/class_4587;
+      25: fconst_0
+      26: ldc           #73                 // float 1000.0f
+      28: fconst_0
+      29: invokevirtual #79                 // Method net/minecraft/class_4587.method_46416:(FFF)V
+      32: getstatic     #81                 // Field world:Lnet/minecraft/class_1937;
+      35: aload_1
+      36: invokevirtual #87                 // Method net/minecraft/class_1937.method_18470:(Ljava/util/UUID;)Lnet/minecraft/class_1657;
+      39: astore        4
+      41: aload         4
+      43: ifnull        98
+      46: aload_1
+      47: getstatic     #89                 // Field player:Lnet/minecraft/class_746;
+      50: invokevirtual #95                 // Method net/minecraft/class_746.method_5667:()Ljava/util/UUID;
+      53: invokevirtual #101                // Method java/util/UUID.equals:(Ljava/lang/Object;)Z
+      56: ifeq          68
+      59: getstatic     #103                // Field camera:Lnet/minecraft/class_4184;
+      62: invokevirtual #109                // Method net/minecraft/class_4184.method_19333:()Z
+      65: ifeq          98
+      68: getstatic     #113                // Field entityRenderDispatcher:Lnet/minecraft/class_898;
+      71: aload         4
+      73: aload_2
+      74: getfield      #58                 // Field net/minecraft/class_243.field_1352:D
+      77: aload_2
+      78: getfield      #61                 // Field net/minecraft/class_243.field_1351:D
+      81: aload_2
+      82: getfield      #64                 // Field net/minecraft/class_243.field_1350:D
+      85: fconst_0
+      86: fconst_1
+      87: getstatic     #72                 // Field matrices:Lnet/minecraft/class_4587;
+      90: getstatic     #115                // Field vertexConsumers:Lnet/minecraft/class_4597;
+      93: ldc           #116                // int 15728880
+      95: invokevirtual #122                // Method net/minecraft/class_898.method_3954:(Lnet/minecraft/class_1297;DDDFFLnet/minecraft/class_4587;Lnet/minecraft/class_4597;I)V
+      98: getstatic     #72                 // Field matrices:Lnet/minecraft/class_4587;
+     101: invokevirtual #125                // Method net/minecraft/class_4587.method_22909:()V
+     104: return
+
+  public static void setupStaticInfo(net.minecraft.class_4587, net.minecraft.class_4597, mtr.entity.EntitySeat, float);
+    Code:
+       0: invokestatic  #140                // Method net/minecraft/class_310.method_1551:()Lnet/minecraft/class_310;
+       3: astore        4
+       5: aload         4
+       7: getfield      #144                // Field net/minecraft/class_310.field_1773:Lnet/minecraft/class_757;
+      10: invokevirtual #150                // Method net/minecraft/class_757.method_19418:()Lnet/minecraft/class_4184;
+      13: putstatic     #103                // Field camera:Lnet/minecraft/class_4184;
+      16: aload         4
+      18: invokevirtual #154                // Method net/minecraft/class_310.method_1561:()Lnet/minecraft/class_898;
+      21: putstatic     #113                // Field entityRenderDispatcher:Lnet/minecraft/class_898;
+      24: aload         4
+      26: getfield      #158                // Field net/minecraft/class_310.field_1687:Lnet/minecraft/class_638;
+      29: putstatic     #81                 // Field world:Lnet/minecraft/class_1937;
+      32: aload         4
+      34: getfield      #161                // Field net/minecraft/class_310.field_1724:Lnet/minecraft/class_746;
+      37: putstatic     #89                 // Field player:Lnet/minecraft/class_746;
+      40: invokestatic  #167                // Method mtr/MTRClient.getLastFrameDuration:()F
+      43: putstatic     #169                // Field lastFrameDuration:F
+      46: aload_0
+      47: putstatic     #72                 // Field matrices:Lnet/minecraft/class_4587;
+      50: aload_1
+      51: putstatic     #115                // Field vertexConsumers:Lnet/minecraft/class_4597;
+      54: aload         4
+      56: getfield      #172                // Field net/minecraft/class_310.field_1719:Lnet/minecraft/class_1297;
+      59: putstatic     #174                // Field cameraEntity:Lnet/minecraft/class_1297;
+      62: aload_2
+      63: ifnull        70
+      66: iconst_1
+      67: goto          71
+      70: iconst_0
+      71: putstatic     #176                // Field hasEntity:Z
+      74: getstatic     #176                // Field hasEntity:Z
+      77: ifeq          96
+      80: fload_3
+      81: f2d
+      82: aload_2
+      83: getfield      #181                // Field mtr/entity/EntitySeat.field_6038:D
+      86: aload_2
+      87: invokevirtual #185                // Method mtr/entity/EntitySeat.method_23317:()D
+      90: invokestatic  #191                // Method net/minecraft/class_3532.method_16436:(DDD)D
+      93: goto          97
+      96: dconst_0
+      97: putstatic     #193                // Field entityX:D
+     100: getstatic     #176                // Field hasEntity:Z
+     103: ifeq          122
+     106: fload_3
+     107: f2d
+     108: aload_2
+     109: getfield      #196                // Field mtr/entity/EntitySeat.field_5971:D
+     112: aload_2
+     113: invokevirtual #199                // Method mtr/entity/EntitySeat.method_23318:()D
+     116: invokestatic  #191                // Method net/minecraft/class_3532.method_16436:(DDD)D
+     119: goto          123
+     122: dconst_0
+     123: putstatic     #201                // Field entityY:D
+     126: getstatic     #176                // Field hasEntity:Z
+     129: ifeq          148
+     132: fload_3
+     133: f2d
+     134: aload_2
+     135: getfield      #204                // Field mtr/entity/EntitySeat.field_5989:D
+     138: aload_2
+     139: invokevirtual #207                // Method mtr/entity/EntitySeat.method_23321:()D
+     142: invokestatic  #191                // Method net/minecraft/class_3532.method_16436:(DDD)D
+     145: goto          149
+     148: dconst_0
+     149: putstatic     #209                // Field entityZ:D
+     152: getstatic     #89                 // Field player:Lnet/minecraft/class_746;
+     155: ifnonnull     164
+     158: getstatic     #212                // Field net/minecraft/class_243.field_1353:Lnet/minecraft/class_243;
+     161: goto          175
+     164: getstatic     #89                 // Field player:Lnet/minecraft/class_746;
+     167: aload         4
+     169: invokevirtual #215                // Method net/minecraft/class_310.method_1488:()F
+     172: invokevirtual #219                // Method net/minecraft/class_746.method_5836:(F)Lnet/minecraft/class_243;
+     175: putstatic     #221                // Field playerEyePosition:Lnet/minecraft/class_243;
+     178: return
+
+  public static void setBatch(boolean);
+    Code:
+       0: iload_0
+       1: putstatic     #228                // Field isTranslucentBatch:Z
+       4: return
+
+  public static net.minecraft.class_2338 applyAverageTransform(net.minecraft.class_243, double, double, double);
+    Code:
+       0: aload_0
+       1: ifnonnull     8
+       4: iconst_1
+       5: goto          9
+       8: iconst_0
+       9: istore        7
+      11: getstatic     #174                // Field cameraEntity:Lnet/minecraft/class_1297;
+      14: ifnonnull     21
+      17: aconst_null
+      18: goto          27
+      21: getstatic     #174                // Field cameraEntity:Lnet/minecraft/class_1297;
+      24: invokevirtual #237                // Method net/minecraft/class_1297.method_19538:()Lnet/minecraft/class_243;
+      27: astore        8
+      29: dload_1
+      30: iload         7
+      32: ifne          40
+      35: aload         8
+      37: ifnonnull     44
+      40: dconst_0
+      41: goto          49
+      44: aload         8
+      46: getfield      #58                 // Field net/minecraft/class_243.field_1352:D
+      49: dadd
+      50: dload_3
+      51: iload         7
+      53: ifne          61
+      56: aload         8
+      58: ifnonnull     65
+      61: dconst_0
+      62: goto          70
+      65: aload         8
+      67: getfield      #61                 // Field net/minecraft/class_243.field_1351:D
+      70: dadd
+      71: dload         5
+      73: iload         7
+      75: ifne          83
+      78: aload         8
+      80: ifnonnull     87
+      83: dconst_0
+      84: goto          92
+      87: aload         8
+      89: getfield      #64                 // Field net/minecraft/class_243.field_1350:D
+      92: dadd
+      93: invokestatic  #243                // Method mtr/data/RailwayData.newBlockPos:(DDD)Lnet/minecraft/class_2338;
+      96: astore        9
+      98: aload         9
+     100: invokestatic  #249                // Method mtr/client/Config.getTrainRenderDistanceBlocks:()I
+     103: aconst_null
+     104: invokestatic  #255                // Method mtr/render/RenderTrains.shouldNotRender:(Lnet/minecraft/class_2338;ILnet/minecraft/class_2350;)Z
+     107: ifeq          112
+     110: aconst_null
+     111: areturn
+     112: getstatic     #72                 // Field matrices:Lnet/minecraft/class_4587;
+     115: invokevirtual #258                // Method net/minecraft/class_4587.method_22903:()V
+     118: aload_0
+     119: ifnull        305
+     122: invokestatic  #261                // Method mtr/MTRClient.isVivecraft:()Z
+     125: ifeq          152
+     128: getstatic     #176                // Field hasEntity:Z
+     131: ifeq          152
+     134: getstatic     #193                // Field entityX:D
+     137: dstore        10
+     139: getstatic     #201                // Field entityY:D
+     142: dstore        12
+     144: getstatic     #209                // Field entityZ:D
+     147: dstore        14
+     149: goto          196
+     152: getstatic     #103                // Field camera:Lnet/minecraft/class_4184;
+     155: invokevirtual #109                // Method net/minecraft/class_4184.method_19333:()Z
+     158: ifeq          167
+     161: getstatic     #221                // Field playerEyePosition:Lnet/minecraft/class_243;
+     164: goto          173
+     167: getstatic     #103                // Field camera:Lnet/minecraft/class_4184;
+     170: invokevirtual #264                // Method net/minecraft/class_4184.method_19326:()Lnet/minecraft/class_243;
+     173: astore        16
+     175: aload         16
+     177: getfield      #58                 // Field net/minecraft/class_243.field_1352:D
+     180: dstore        10
+     182: aload         16
+     184: getfield      #61                 // Field net/minecraft/class_243.field_1351:D
+     187: dstore        12
+     189: aload         16
+     191: getfield      #64                 // Field net/minecraft/class_243.field_1350:D
+     194: dstore        14
+     196: getstatic     #103                // Field camera:Lnet/minecraft/class_4184;
+     199: invokevirtual #267                // Method net/minecraft/class_4184.method_19330:()F
+     202: fstore        16
+     204: getstatic     #89                 // Field player:Lnet/minecraft/class_746;
+     207: invokestatic  #273                // InterfaceMethod mtr/mappings/Utilities.getYaw:(Lnet/minecraft/class_1297;)F
+     210: fload         16
+     212: fsub
+     213: fstore        17
+     215: fload         17
+     217: invokestatic  #279                // Method java/lang/Math.abs:(F)F
+     220: fstore        18
+     222: fload         18
+     224: ldc           #33                 // float 100.0f
+     226: fcmpl
+     227: ifle          237
+     230: iconst_1
+     231: putstatic     #281                // Field flipActive:Z
+     234: goto          249
+     237: fload         18
+     239: ldc           #35                 // float 80.0f
+     241: fcmpg
+     242: ifge          249
+     245: iconst_0
+     246: putstatic     #281                // Field flipActive:Z
+     249: getstatic     #72                 // Field matrices:Lnet/minecraft/class_4587;
+     252: dload         10
+     254: dload         12
+     256: dload         14
+     258: invokevirtual #285                // Method net/minecraft/class_4587.method_22904:(DDD)V
+     261: getstatic     #72                 // Field matrices:Lnet/minecraft/class_4587;
+     264: fload         17
+     266: getstatic     #281                // Field flipActive:Z
+     269: ifeq          278
+     272: sipush        180
+     275: goto          279
+     278: iconst_0
+     279: i2f
+     280: fadd
+     281: invokestatic  #291                // InterfaceMethod mtr/mappings/UtilitiesClient.rotateYDegrees:(Lnet/minecraft/class_4587;F)V
+     284: getstatic     #72                 // Field matrices:Lnet/minecraft/class_4587;
+     287: aload_0
+     288: getfield      #58                 // Field net/minecraft/class_243.field_1352:D
+     291: dneg
+     292: aload_0
+     293: getfield      #61                 // Field net/minecraft/class_243.field_1351:D
+     296: dneg
+     297: aload_0
+     298: getfield      #64                 // Field net/minecraft/class_243.field_1350:D
+     301: dneg
+     302: invokevirtual #285                // Method net/minecraft/class_4587.method_22904:(DDD)V
+     305: aload         9
+     307: areturn
+}

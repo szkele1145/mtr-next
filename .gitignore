@@ -1,0 +1,12 @@
+build/
+run/
+.gradle/
+logs/
+*.log
+*.jar.tmp
+!gradle/wrapper/gradle-wrapper.jar
+publish-*.js
+upload-modrinth*.js
+*.token
+.mrtoken
+.ghtoken

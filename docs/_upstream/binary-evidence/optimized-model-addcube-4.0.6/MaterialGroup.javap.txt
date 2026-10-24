@@ -1,0 +1,70 @@
+﻿Compiled from "OptimizedModel.java"
+public final class org.mtr.mapping.mapper.OptimizedModel$MaterialGroup {
+  private final org.mtr.mapping.render.batch.MaterialProperties materialProperties;
+
+  private final java.util.List<java.util.function.Consumer<org.mtr.mapping.render.vertex.CapturingVertexConsumer>> modelPartConsumers;
+
+  public org.mtr.mapping.mapper.OptimizedModel$MaterialGroup(org.mtr.mapping.mapper.OptimizedModel$ShaderType, org.mtr.mapping.holder.Identifier);
+    Code:
+       0: aload_0
+       1: invokespecial #29                 // Method java/lang/Object."<init>":()V
+       4: aload_0
+       5: new           #31                 // class java/util/ArrayList
+       8: dup
+       9: invokespecial #32                 // Method java/util/ArrayList."<init>":()V
+      12: putfield      #34                 // Field modelPartConsumers:Ljava/util/List;
+      15: aload_0
+      16: new           #36                 // class org/mtr/mapping/render/batch/MaterialProperties
+      19: dup
+      20: aload_1
+      21: aload_2
+      22: aconst_null
+      23: invokespecial #39                 // Method org/mtr/mapping/render/batch/MaterialProperties."<init>":(Lorg/mtr/mapping/mapper/OptimizedModel$ShaderType;Lorg/mtr/mapping/holder/Identifier;Ljava/lang/Integer;)V
+      26: putfield      #41                 // Field materialProperties:Lorg/mtr/mapping/render/batch/MaterialProperties;
+      29: return
+
+  public void addCube(org.mtr.mapping.mapper.ModelPartExtension, double, double, double, boolean, int);
+    Code:
+       0: aload_1
+       1: getfield      #58                 // Field org/mtr/mapping/mapper/ModelPartExtension.modelPart:Lnet/minecraft/class_630;
+       4: ifnull        32
+       7: aload_0
+       8: getfield      #34                 // Field modelPartConsumers:Ljava/util/List;
+      11: dload_2
+      12: dload         4
+      14: dload         6
+      16: iload         8
+      18: aload_1
+      19: iload         9
+      21: invokedynamic #78,  0             // InvokeDynamic #0:accept:(DDDZLorg/mtr/mapping/mapper/ModelPartExtension;I)Ljava/util/function/Consumer;
+      26: invokeinterface #84,  2           // InterfaceMethod java/util/List.add:(Ljava/lang/Object;)Z
+      31: pop
+      32: return
+
+  private static void lambda$addCube$0(double, double, double, boolean, org.mtr.mapping.mapper.ModelPartExtension, int, org.mtr.mapping.render.vertex.CapturingVertexConsumer);
+    Code:
+       0: new           #91                 // class net/minecraft/class_4587
+       3: dup
+       4: invokespecial #92                 // Method net/minecraft/class_4587."<init>":()V
+       7: astore        10
+       9: aload         10
+      11: dload_0
+      12: dload_2
+      13: dload         4
+      15: invokevirtual #96                 // Method net/minecraft/class_4587.method_22904:(DDD)V
+      18: iload         6
+      20: ifeq          38
+      23: aload         10
+      25: getstatic     #102                // Field net/minecraft/class_7833.field_40716:Lnet/minecraft/class_7833;
+      28: ldc           #103                // float 180.0f
+      30: invokeinterface #107,  2          // InterfaceMethod net/minecraft/class_7833.rotationDegrees:(F)Lorg/joml/Quaternionf;
+      35: invokevirtual #111                // Method net/minecraft/class_4587.method_22907:(Lorg/joml/Quaternionf;)V
+      38: aload         7
+      40: getfield      #58                 // Field org/mtr/mapping/mapper/ModelPartExtension.modelPart:Lnet/minecraft/class_630;
+      43: aload         10
+      45: aload         9
+      47: iload         8
+      49: invokestatic  #117                // Method org/mtr/mapping/holder/OverlayTexture.getDefaultUvMapped:()I
+      52: invokevirtual #123                // Method net/minecraft/class_630.method_22698:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;II)V
+      55: return
+}

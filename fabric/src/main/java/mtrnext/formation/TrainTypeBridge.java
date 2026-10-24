@@ -1,0 +1,136 @@
+package mtrnext.formation;
+
+import mtr.client.TrainClientRegistry;
+import mtr.client.TrainProperties;
+import mtrnext.MtrNext;
+import mtrnext.pack.VehiclePackLoader;
+import mtrnext.pack.VehicleResource;
+
+/**
+ * [0.5] 4.0 车型 → YMTR 车型注册表的精确桥接。
+ * <p>
+ * javap 实证（mtr.client.TrainClientRegistry）：
+ * <ul>
+ *   <li>{@code REGISTRY: Map<String, TrainProperties>}（String = customResourcesType 车型 id）；</li>
+ *   <li>{@code register(String, TrainProperties)} 公开重载——可直接注册自定义车型；</li>
+ *   <li>{@code getTrainProperties(String)} 是发车/渲染的解析入口；</li>
+ *   <li>{@code reset()} 资源重载时清表（3.x 内建车型重灌）。</li>
+ * </ul>
+ * <p>
+ * <b>精确映射策略</b>：4.0 车辆的资源重载时（CustomResourcesReloadMixin 已挂钩），
+ * 把每个 4.0 VehicleResource 转成 3.x {@link TrainProperties}（baseTrainType 用
+ * family 名 + 渲染器指向我们自己的 bbmodel 渲染层），经 TrainClientRegistry.register
+ * 注册——Siding.baseTrainType 写 family 名后，YMTR 发车/渲染就能解析到真车型，
+ * 不再是无效字符串。
+ * <p>
+ * 渲染器：0.5 阶段先复用 3.x 的默认模型渲染（baseTrainType 映射不到时 YMTR
+ * 的 getTrainProperties 返回 blank），0.6 换 bbmodel 渲染器接管。
+ */
+public final class TrainTypeBridge {
+
+	private TrainTypeBridge() {
+	}
+
+	/**
+	 * 把全部 4.0 车辆注册进 YMTR 的 TrainClientRegistry（资源重载时调用）。
+	 * <p>
+	 * [0.6] 完整构造 TrainProperties：12 参构造器注入
+	 * bbmodel 渲染器（{@link mtrnext.client.render.BbModelTrainRenderer}），
+	 * 车辆外观与几何全部来自 4.0 车包。
+	 *
+	 * @return 注册的车型数
+	 */
+	public static int registerAll4xVehicles() {
+		int count = 0;
+		try {
+			for (final java.util.Map.Entry<String, VehicleResource> e : VehiclePackLoader.getVehicles().entrySet()) {
+				final VehicleResource res = e.getValue();
+				final String trainId = familyOf(res.id);
+				final mtr.client.TrainProperties props = new mtr.client.TrainProperties(
+						trainId,
+						net.minecraft.network.chat.Component.literal(res.name == null || res.name.isEmpty() ? trainId : res.name),
+						res.id,                       // description 先用全 id（4.0 车包无独立 description 字段）
+						"",                          // wikipediaArticle
+						res.color,
+						(float) res.legacyRiderOffset, // [0.28] 4.0 车包的 3.x 骑乘高度回退字段
+						0.0F,                        // riderOffsetDismounting
+						(float) res.bogie1Position,  // bogiePosition
+						res.hasGangway1 && res.hasGangway2 ? false : false, // isJacobsBogie（4.0 无对应概念）
+						res.hasGangway1 || res.hasGangway2,                // hasGangwayConnection
+						new mtrnext.client.render.BbModelTrainRenderer(res.id),
+						res.bveSoundBaseResource.isEmpty()
+								? new mtrnext.sound.BlankTrainSound()
+								: mtrnext.sound.BveTrainSound.create(res.bveSoundBaseResource));
+				TrainClientRegistry.register(trainId, props);
+				count++;
+			}
+			if (count > 0) {
+				MtrNext.LOGGER.info("Registered {} 4.0-format train types into YMTR registry", count);
+			}
+			// ★ [0.41.5] 已按用户要求取消「覆盖原版车型」。
+			//
+			//   0.41.1 曾用 4.0 车覆盖全部 97 个 3.x 默认 TRAIN 车型，
+			//   效果是原版配车界面里所有车都变成车包车 —— 用户明确不要。
+			//
+			//   ⇒ 现在只在 TrainClientRegistry 里「新增」4.0 车型，
+			//     原版车型保持原样。4.0 车只在 mtr-next 自己的配置页里可选。
+			// overrideNativeTrainTypes();   // 已禁用
+		} catch (final Throwable t) {
+			MtrNext.LOGGER.error("Failed to register 4.0 train types", t);
+		}
+		return count;
+	}
+
+	/**
+	 * 用 4.0 车包里的第一辆车覆盖 YMTR 现有的全部 TRAIN 车型。
+	 *
+	 * <p>这样玩家在原版车辆管理里选任何默认车型，渲染出来的都是 4.0 车包的车。
+	 */
+	private static void overrideNativeTrainTypes() {
+		try {
+			final java.util.Map<String, VehicleResource> vehicles = VehiclePackLoader.getVehicles();
+			if (vehicles.isEmpty()) {
+				return;
+			}
+			final VehicleResource rep = vehicles.values().iterator().next();
+			if (rep == null) {
+				return;
+			}
+			// 先收集现有车型 id（避免在 forEach 里改同一个 map）
+			final java.util.List<String> nativeIds = new java.util.ArrayList<>();
+			TrainClientRegistry.forEach(mtr.data.TransportMode.TRAIN, (id, props) -> nativeIds.add(id));
+			if (nativeIds.isEmpty()) {
+				MtrNext.LOGGER.info("No native TRAIN types to override");
+				return;
+			}
+			int overridden = 0;
+			for (final String id : nativeIds) {
+				final mtr.client.TrainProperties props = new mtr.client.TrainProperties(
+						id,   // ← 保留原 id，使 baseTrainType 仍能查到
+						net.minecraft.network.chat.Component.literal(
+								rep.name == null || rep.name.isEmpty() ? rep.id : rep.name),
+						rep.id,
+						"",
+						rep.color,
+						(float) rep.legacyRiderOffset,
+						0.0F,
+						(float) rep.bogie1Position,
+						false,
+						rep.hasGangway1 || rep.hasGangway2,
+						new mtrnext.client.render.BbModelTrainRenderer(rep.id),
+						rep.bveSoundBaseResource.isEmpty()
+								? new mtrnext.sound.BlankTrainSound()
+								: mtrnext.sound.BveTrainSound.create(rep.bveSoundBaseResource));
+				TrainClientRegistry.register(id, props);
+				overridden++;
+			}
+			MtrNext.LOGGER.info("Overrode {} native TRAIN types with 4.0 vehicle '{}'", overridden, rep.id);
+		} catch (final Throwable t) {
+			MtrNext.LOGGER.error("Failed to override native train types", t);
+		}
+	}
+
+	private static String familyOf(String id) {
+		return id.contains("(") ? id.substring(0, id.indexOf('(')) : id;
+	}
+}

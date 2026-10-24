@@ -1,0 +1,13 @@
+{
+	"required": true,
+	"minVersion": "0.8",
+	"package": "mtrnext.mixin",
+	"compatibilityLevel": "JAVA_17",
+	"refmap": "mtr-next-4to3-car.refmap.json",
+	
+	"mixins": ["SidingAutoAdaptMixin","TrainTypeSpacingMixin"],
+	"client": ["CustomResourcesReloadMixin","SidingScreenMixin","TrainClientRegistryMixin"],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

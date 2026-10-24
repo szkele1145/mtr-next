@@ -1,0 +1,913 @@
+﻿Compiled from "JonModelTrainRenderer.java"
+public class mtr.render.JonModelTrainRenderer extends mtr.render.TrainRendererBase implements mtr.data.IGui {
+  private final mtr.data.TrainClient train;
+
+  public final mtr.model.ModelTrainBase model;
+
+  public final java.lang.String textureId;
+
+  public final java.lang.String gangwayConnectionId;
+
+  public final java.lang.String trainBarrierId;
+
+  private static final net.minecraft.class_583<net.minecraft.class_1695> MODEL_MINECART;
+
+  private static final net.minecraft.class_583<net.minecraft.class_1690> MODEL_BOAT;
+
+  private static final java.util.Map<java.lang.Long, mtr.render.JonModelTrainRenderer$FakeBoat> BOATS;
+
+  private static final mtr.model.ModelCableCarGrip MODEL_CABLE_CAR_GRIP;
+
+  private static final mtr.model.ModelBogie MODEL_BOGIE;
+
+  private mtr.render.JonModelTrainRenderer(mtr.model.ModelTrainBase, java.lang.String, java.lang.String, java.lang.String, mtr.data.TrainClient);
+    Code:
+       0: aload_0
+       1: invokespecial #40                 // Method mtr/render/TrainRendererBase."<init>":()V
+       4: aload_0
+       5: aload_1
+       6: putfield      #42                 // Field model:Lmtr/model/ModelTrainBase;
+       9: aload_0
+      10: aload_2
+      11: invokestatic  #46                 // Method resolvePath:(Ljava/lang/String;)Ljava/lang/String;
+      14: putfield      #48                 // Field textureId:Ljava/lang/String;
+      17: aload_0
+      18: aload_3
+      19: invokestatic  #46                 // Method resolvePath:(Ljava/lang/String;)Ljava/lang/String;
+      22: putfield      #50                 // Field gangwayConnectionId:Ljava/lang/String;
+      25: aload_0
+      26: aload         4
+      28: invokestatic  #46                 // Method resolvePath:(Ljava/lang/String;)Ljava/lang/String;
+      31: putfield      #52                 // Field trainBarrierId:Ljava/lang/String;
+      34: aload_0
+      35: aload         5
+      37: putfield      #54                 // Field train:Lmtr/data/TrainClient;
+      40: return
+
+  public mtr.render.JonModelTrainRenderer(mtr.model.ModelTrainBase, java.lang.String, java.lang.String, java.lang.String);
+    Code:
+       0: aload_0
+       1: aload_1
+       2: aload_2
+       3: aload_3
+       4: aload         4
+       6: aconst_null
+       7: invokespecial #59                 // Method "<init>":(Lmtr/model/ModelTrainBase;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lmtr/data/TrainClient;)V
+      10: return
+
+  public mtr.render.TrainRendererBase createTrainInstance(mtr.data.TrainClient);
+    Code:
+       0: new           #2                  // class mtr/render/JonModelTrainRenderer
+       3: dup
+       4: aload_0
+       5: getfield      #42                 // Field model:Lmtr/model/ModelTrainBase;
+       8: aload_0
+       9: getfield      #48                 // Field textureId:Ljava/lang/String;
+      12: aload_0
+      13: getfield      #50                 // Field gangwayConnectionId:Ljava/lang/String;
+      16: aload_0
+      17: getfield      #52                 // Field trainBarrierId:Ljava/lang/String;
+      20: aload_1
+      21: invokespecial #59                 // Method "<init>":(Lmtr/model/ModelTrainBase;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lmtr/data/TrainClient;)V
+      24: areturn
+
+  public void renderCar(int, double, double, double, float, float, boolean, boolean);
+    Code:
+       0: iload         10
+       2: ifeq          15
+       5: aload_0
+       6: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+       9: invokevirtual #77                 // Method mtr/data/TrainClient.getDoorValue:()F
+      12: goto          16
+      15: fconst_0
+      16: fstore        12
+      18: iload         11
+      20: ifeq          33
+      23: aload_0
+      24: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+      27: invokevirtual #77                 // Method mtr/data/TrainClient.getDoorValue:()F
+      30: goto          34
+      33: fconst_0
+      34: fstore        13
+      36: aload_0
+      37: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+      40: getfield      #81                 // Field mtr/data/TrainClient.path:Ljava/util/List;
+      43: aload_0
+      44: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+      47: iconst_0
+      48: aload_0
+      49: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+      52: getfield      #85                 // Field mtr/data/TrainClient.spacing:I
+      55: iconst_1
+      56: invokevirtual #89                 // Method mtr/data/TrainClient.getIndex:(IIZ)I
+      59: invokeinterface #95,  2           // InterfaceMethod java/util/List.get:(I)Ljava/lang/Object;
+      64: checkcast     #97                 // class mtr/path/PathData
+      67: getfield      #100                // Field mtr/path/PathData.dwellTime:I
+      70: ifle          77
+      73: iconst_1
+      74: goto          78
+      77: iconst_0
+      78: istore        14
+      80: fload         9
+      82: fconst_0
+      83: fcmpg
+      84: ifge          100
+      87: aload_0
+      88: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+      91: getfield      #104                // Field mtr/data/TrainClient.transportMode:Lmtr/data/TransportMode;
+      94: getfield      #110                // Field mtr/data/TransportMode.hasPitchAscending:Z
+      97: goto          110
+     100: aload_0
+     101: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     104: getfield      #104                // Field mtr/data/TrainClient.transportMode:Lmtr/data/TransportMode;
+     107: getfield      #113                // Field mtr/data/TransportMode.hasPitchDescending:Z
+     110: istore        15
+     112: aload_0
+     113: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     116: getfield      #116                // Field mtr/data/TrainClient.trainId:Ljava/lang/String;
+     119: astore        16
+     121: aload         16
+     123: invokestatic  #122                // Method mtr/client/TrainClientRegistry.getTrainProperties:(Ljava/lang/String;)Lmtr/client/TrainProperties;
+     126: astore        17
+     128: aload_0
+     129: getfield      #42                 // Field model:Lmtr/model/ModelTrainBase;
+     132: ifnonnull     142
+     135: getstatic     #125                // Field isTranslucentBatch:Z
+     138: ifeq          142
+     141: return
+     142: aload_0
+     143: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     146: invokevirtual #133                // Method mtr/data/TrainClient.getViewOffset:()Lnet/minecraft/class_243;
+     149: dload_2
+     150: dload         4
+     152: dload         6
+     154: invokestatic  #137                // Method applyAverageTransform:(Lnet/minecraft/class_243;DDD)Lnet/minecraft/class_2338;
+     157: astore        18
+     159: aload         18
+     161: ifnonnull     165
+     164: return
+     165: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     168: invokevirtual #148                // Method net/minecraft/class_4587.method_22903:()V
+     171: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     174: dload_2
+     175: dload         4
+     177: dload         6
+     179: invokevirtual #152                // Method net/minecraft/class_4587.method_22904:(DDD)V
+     182: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     185: ldc           #153                // float 3.1415927f
+     187: fload         8
+     189: fadd
+     190: invokestatic  #159                // InterfaceMethod mtr/mappings/UtilitiesClient.rotateY:(Lnet/minecraft/class_4587;F)V
+     193: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     196: ldc           #153                // float 3.1415927f
+     198: iload         15
+     200: ifeq          208
+     203: fload         9
+     205: goto          209
+     208: fconst_0
+     209: fadd
+     210: invokestatic  #162                // InterfaceMethod mtr/mappings/UtilitiesClient.rotateX:(Lnet/minecraft/class_4587;F)V
+     213: getstatic     #166                // Field world:Lnet/minecraft/class_1937;
+     216: getstatic     #172                // Field net/minecraft/class_1944.field_9282:Lnet/minecraft/class_1944;
+     219: aload         18
+     221: invokevirtual #178                // Method net/minecraft/class_1937.method_8314:(Lnet/minecraft/class_1944;Lnet/minecraft/class_2338;)I
+     224: getstatic     #166                // Field world:Lnet/minecraft/class_1937;
+     227: getstatic     #181                // Field net/minecraft/class_1944.field_9284:Lnet/minecraft/class_1944;
+     230: aload         18
+     232: invokevirtual #178                // Method net/minecraft/class_1937.method_8314:(Lnet/minecraft/class_1944;Lnet/minecraft/class_2338;)I
+     235: invokestatic  #187                // Method net/minecraft/class_765.method_23687:(II)I
+     238: istore        19
+     240: aload_0
+     241: getfield      #42                 // Field model:Lmtr/model/ModelTrainBase;
+     244: ifnull        254
+     247: aload_0
+     248: getfield      #48                 // Field textureId:Ljava/lang/String;
+     251: ifnonnull     507
+     254: aload_0
+     255: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     258: getfield      #104                // Field mtr/data/TrainClient.transportMode:Lmtr/data/TransportMode;
+     261: getstatic     #190                // Field mtr/data/TransportMode.BOAT:Lmtr/data/TransportMode;
+     264: if_acmpne     271
+     267: iconst_1
+     268: goto          272
+     271: iconst_0
+     272: istore        20
+     274: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     277: dconst_0
+     278: iload         20
+     280: ifeq          289
+     283: ldc2_w        #191                // double 0.875d
+     286: goto          292
+     289: ldc2_w        #193                // double 0.5d
+     292: dconst_0
+     293: invokevirtual #152                // Method net/minecraft/class_4587.method_22904:(DDD)V
+     296: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     299: ldc           #195                // float 90.0f
+     301: invokestatic  #198                // InterfaceMethod mtr/mappings/UtilitiesClient.rotateYDegrees:(Lnet/minecraft/class_4587;F)V
+     304: iload         20
+     306: ifeq          315
+     309: getstatic     #200                // Field MODEL_BOAT:Lnet/minecraft/class_583;
+     312: goto          318
+     315: getstatic     #202                // Field MODEL_MINECART:Lnet/minecraft/class_583;
+     318: astore        21
+     320: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     323: aload         21
+     325: aload_0
+     326: aload_0
+     327: getfield      #48                 // Field textureId:Ljava/lang/String;
+     330: invokedynamic #226,  0            // InvokeDynamic #0:apply:()Ljava/util/function/Function;
+     335: invokevirtual #230                // Method resolveTexture:(Ljava/lang/String;Ljava/util/function/Function;)Lnet/minecraft/class_2960;
+     338: invokevirtual #234                // Method net/minecraft/class_583.method_23500:(Lnet/minecraft/class_2960;)Lnet/minecraft/class_1921;
+     341: invokeinterface #240,  2          // InterfaceMethod net/minecraft/class_4597.getBuffer:(Lnet/minecraft/class_1921;)Lnet/minecraft/class_4588;
+     346: astore        22
+     348: iload         20
+     350: ifeq          472
+     353: getstatic     #242                // Field BOATS:Ljava/util/Map;
+     356: aload_0
+     357: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     360: getfield      #246                // Field mtr/data/TrainClient.id:J
+     363: invokestatic  #252                // Method java/lang/Long.valueOf:(J)Ljava/lang/Long;
+     366: invokeinterface #258,  2          // InterfaceMethod java/util/Map.containsKey:(Ljava/lang/Object;)Z
+     371: ifne          403
+     374: getstatic     #242                // Field BOATS:Ljava/util/Map;
+     377: aload_0
+     378: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     381: getfield      #246                // Field mtr/data/TrainClient.id:J
+     384: invokestatic  #252                // Method java/lang/Long.valueOf:(J)Ljava/lang/Long;
+     387: new           #9                  // class mtr/render/JonModelTrainRenderer$FakeBoat
+     390: dup
+     391: getstatic     #166                // Field world:Lnet/minecraft/class_1937;
+     394: invokespecial #261                // Method mtr/render/JonModelTrainRenderer$FakeBoat."<init>":(Lnet/minecraft/class_1937;)V
+     397: invokeinterface #265,  3          // InterfaceMethod java/util/Map.put:(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;
+     402: pop
+     403: getstatic     #200                // Field MODEL_BOAT:Lnet/minecraft/class_583;
+     406: getstatic     #242                // Field BOATS:Ljava/util/Map;
+     409: aload_0
+     410: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     413: getfield      #246                // Field mtr/data/TrainClient.id:J
+     416: invokestatic  #252                // Method java/lang/Long.valueOf:(J)Ljava/lang/Long;
+     419: invokeinterface #269,  2          // InterfaceMethod java/util/Map.get:(Ljava/lang/Object;)Ljava/lang/Object;
+     424: checkcast     #271                // class net/minecraft/class_1690
+     427: aload_0
+     428: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     431: invokevirtual #274                // Method mtr/data/TrainClient.getSpeed:()F
+     434: ldc_w         #275                // float 0.01f
+     437: fadd
+     438: fload         12
+     440: fconst_0
+     441: fcmpl
+     442: ifne          458
+     445: fload         13
+     447: fconst_0
+     448: fcmpl
+     449: ifne          458
+     452: getstatic     #279                // Field lastFrameDuration:F
+     455: goto          459
+     458: fconst_0
+     459: fmul
+     460: fconst_0
+     461: ldc_w         #280                // float -0.1f
+     464: fconst_0
+     465: fconst_0
+     466: invokevirtual #284                // Method net/minecraft/class_583.method_2819:(Lnet/minecraft/class_1297;FFFFF)V
+     469: goto          485
+     472: aload         21
+     474: aconst_null
+     475: fconst_0
+     476: fconst_0
+     477: ldc_w         #280                // float -0.1f
+     480: fconst_0
+     481: fconst_0
+     482: invokevirtual #284                // Method net/minecraft/class_583.method_2819:(Lnet/minecraft/class_1297;FFFFF)V
+     485: aload         21
+     487: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     490: aload         22
+     492: iload         19
+     494: getstatic     #289                // Field net/minecraft/class_4608.field_21444:I
+     497: fconst_1
+     498: fconst_1
+     499: fconst_1
+     500: fconst_1
+     501: invokevirtual #293                // Method net/minecraft/class_583.method_2828:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;IIFFFF)V
+     504: goto          788
+     507: aload_0
+     508: getfield      #48                 // Field textureId:Ljava/lang/String;
+     511: invokevirtual #297                // Method java/lang/String.isEmpty:()Z
+     514: ifne          788
+     517: invokestatic  #302                // Method mtr/MTRClient.isReplayMod:()Z
+     520: ifne          541
+     523: aload         18
+     525: getstatic     #306                // Field camera:Lnet/minecraft/class_4184;
+     528: invokevirtual #312                // Method net/minecraft/class_4184.method_19328:()Lnet/minecraft/class_2338;
+     531: invokevirtual #316                // Method net/minecraft/class_2338.method_10262:(Lnet/minecraft/class_2382;)D
+     534: ldc2_w        #317                // double 1024.0d
+     537: dcmpg
+     538: ifgt          545
+     541: iconst_1
+     542: goto          546
+     545: iconst_0
+     546: istore        20
+     548: aload_0
+     549: getfield      #42                 // Field model:Lmtr/model/ModelTrainBase;
+     552: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     555: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     558: aload_0
+     559: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     562: aload_0
+     563: aload_0
+     564: getfield      #48                 // Field textureId:Ljava/lang/String;
+     567: invokedynamic #323,  0            // InvokeDynamic #1:apply:()Ljava/util/function/Function;
+     572: invokevirtual #230                // Method resolveTexture:(Ljava/lang/String;Ljava/util/function/Function;)Lnet/minecraft/class_2960;
+     575: iload         19
+     577: fload         12
+     579: fload         13
+     581: aload_0
+     582: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     585: invokevirtual #326                // Method mtr/data/TrainClient.isDoorOpening:()Z
+     588: iload_1
+     589: aload_0
+     590: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     593: getfield      #329                // Field mtr/data/TrainClient.trainCars:I
+     596: aload_0
+     597: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     600: invokevirtual #332                // Method mtr/data/TrainClient.isReversed:()Z
+     603: ifne          610
+     606: iconst_1
+     607: goto          611
+     610: iconst_0
+     611: aload_0
+     612: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     615: invokevirtual #339                // Method mtr/data/TrainClient.getIsOnRoute:()Z
+     618: getstatic     #125                // Field isTranslucentBatch:Z
+     621: iload         20
+     623: iload         14
+     625: invokevirtual #343                // Method mtr/model/ModelTrainBase.render:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;Lmtr/data/NameColorDataBase;Lnet/minecraft/class_2960;IFFZIIZZZZZ)V
+     628: aload         17
+     630: getfield      #346                // Field mtr/client/TrainProperties.bogiePosition:F
+     633: fconst_0
+     634: fcmpl
+     635: ifeq          788
+     638: getstatic     #125                // Field isTranslucentBatch:Z
+     641: ifne          788
+     644: aload         17
+     646: getfield      #349                // Field mtr/client/TrainProperties.isJacobsBogie:Z
+     649: ifeq          739
+     652: iload_1
+     653: ifne          699
+     656: getstatic     #351                // Field MODEL_BOGIE:Lmtr/model/ModelBogie;
+     659: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     662: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     665: iload         19
+     667: aload_0
+     668: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     671: getfield      #329                // Field mtr/data/TrainClient.trainCars:I
+     674: iconst_1
+     675: if_icmpne     682
+     678: iconst_0
+     679: goto          693
+     682: aload         17
+     684: getfield      #346                // Field mtr/client/TrainProperties.bogiePosition:F
+     687: ldc_w         #354                // float 16.0f
+     690: fmul
+     691: f2i
+     692: ineg
+     693: invokevirtual #357                // Method mtr/model/ModelBogie.render:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;II)V
+     696: goto          788
+     699: iload_1
+     700: aload_0
+     701: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     704: getfield      #329                // Field mtr/data/TrainClient.trainCars:I
+     707: iconst_1
+     708: isub
+     709: if_icmpne     788
+     712: getstatic     #351                // Field MODEL_BOGIE:Lmtr/model/ModelBogie;
+     715: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     718: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     721: iload         19
+     723: aload         17
+     725: getfield      #346                // Field mtr/client/TrainProperties.bogiePosition:F
+     728: ldc_w         #354                // float 16.0f
+     731: fmul
+     732: f2i
+     733: invokevirtual #357                // Method mtr/model/ModelBogie.render:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;II)V
+     736: goto          788
+     739: getstatic     #351                // Field MODEL_BOGIE:Lmtr/model/ModelBogie;
+     742: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     745: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     748: iload         19
+     750: aload         17
+     752: getfield      #346                // Field mtr/client/TrainProperties.bogiePosition:F
+     755: ldc_w         #354                // float 16.0f
+     758: fmul
+     759: f2i
+     760: invokevirtual #357                // Method mtr/model/ModelBogie.render:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;II)V
+     763: getstatic     #351                // Field MODEL_BOGIE:Lmtr/model/ModelBogie;
+     766: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     769: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     772: iload         19
+     774: aload         17
+     776: getfield      #346                // Field mtr/client/TrainProperties.bogiePosition:F
+     779: ldc_w         #354                // float 16.0f
+     782: fmul
+     783: f2i
+     784: ineg
+     785: invokevirtual #357                // Method mtr/model/ModelBogie.render:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;II)V
+     788: aload_0
+     789: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     792: getfield      #104                // Field mtr/data/TrainClient.transportMode:Lmtr/data/TransportMode;
+     795: getstatic     #360                // Field mtr/data/TransportMode.CABLE_CAR:Lmtr/data/TransportMode;
+     798: if_acmpne     873
+     801: getstatic     #125                // Field isTranslucentBatch:Z
+     804: ifne          873
+     807: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     810: dconst_0
+     811: getstatic     #360                // Field mtr/data/TransportMode.CABLE_CAR:Lmtr/data/TransportMode;
+     814: getfield      #363                // Field mtr/data/TransportMode.railOffset:I
+     817: i2d
+     818: ldc2_w        #193                // double 0.5d
+     821: dadd
+     822: dconst_0
+     823: invokevirtual #152                // Method net/minecraft/class_4587.method_22904:(DDD)V
+     826: iload         15
+     828: ifne          839
+     831: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     834: fload         9
+     836: invokestatic  #162                // InterfaceMethod mtr/mappings/UtilitiesClient.rotateX:(Lnet/minecraft/class_4587;F)V
+     839: aload         16
+     841: ldc_w         #365                // String _rht
+     844: invokevirtual #369                // Method java/lang/String.endsWith:(Ljava/lang/String;)Z
+     847: ifeq          859
+     850: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     853: ldc_w         #370                // float 180.0f
+     856: invokestatic  #198                // InterfaceMethod mtr/mappings/UtilitiesClient.rotateYDegrees:(Lnet/minecraft/class_4587;F)V
+     859: getstatic     #372                // Field MODEL_CABLE_CAR_GRIP:Lmtr/model/ModelCableCarGrip;
+     862: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     865: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     868: iload         19
+     870: invokevirtual #377                // Method mtr/model/ModelCableCarGrip.render:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;I)V
+     873: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     876: invokevirtual #380                // Method net/minecraft/class_4587.method_22909:()V
+     879: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     882: invokevirtual #380                // Method net/minecraft/class_4587.method_22909:()V
+     885: return
+
+  public void renderConnection(net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, double, double, double, float, float);
+    Code:
+       0: aload_0
+       1: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+       4: invokevirtual #133                // Method mtr/data/TrainClient.getViewOffset:()Lnet/minecraft/class_243;
+       7: dload         9
+       9: dload         11
+      11: dload         13
+      13: invokestatic  #137                // Method applyAverageTransform:(Lnet/minecraft/class_243;DDD)Lnet/minecraft/class_2338;
+      16: astore        17
+      18: aload         17
+      20: ifnonnull     24
+      23: return
+      24: aload_0
+      25: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+      28: getfield      #116                // Field mtr/data/TrainClient.trainId:Ljava/lang/String;
+      31: astore        18
+      33: aload         18
+      35: invokestatic  #122                // Method mtr/client/TrainClientRegistry.getTrainProperties:(Ljava/lang/String;)Lmtr/client/TrainProperties;
+      38: astore        19
+      40: getstatic     #166                // Field world:Lnet/minecraft/class_1937;
+      43: getstatic     #172                // Field net/minecraft/class_1944.field_9282:Lnet/minecraft/class_1944;
+      46: aload         17
+      48: invokevirtual #178                // Method net/minecraft/class_1937.method_8314:(Lnet/minecraft/class_1944;Lnet/minecraft/class_2338;)I
+      51: getstatic     #166                // Field world:Lnet/minecraft/class_1937;
+      54: getstatic     #181                // Field net/minecraft/class_1944.field_9284:Lnet/minecraft/class_1944;
+      57: aload         17
+      59: invokevirtual #178                // Method net/minecraft/class_1937.method_8314:(Lnet/minecraft/class_1944;Lnet/minecraft/class_2338;)I
+      62: invokestatic  #187                // Method net/minecraft/class_765.method_23687:(II)I
+      65: istore        20
+      67: aload_0
+      68: getfield      #50                 // Field gangwayConnectionId:Ljava/lang/String;
+      71: invokevirtual #297                // Method java/lang/String.isEmpty:()Z
+      74: ifne          305
+      77: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+      80: aload_0
+      81: iconst_1
+      82: ldc_w         #407                // String exterior
+      85: invokevirtual #411                // Method getConnectorTextureString:(ZLjava/lang/String;)Lnet/minecraft/class_2960;
+      88: invokestatic  #416                // Method mtr/render/MoreRenderLayers.getExterior:(Lnet/minecraft/class_2960;)Lnet/minecraft/class_1921;
+      91: invokeinterface #240,  2          // InterfaceMethod net/minecraft/class_4597.getBuffer:(Lnet/minecraft/class_1921;)Lnet/minecraft/class_4588;
+      96: astore        21
+      98: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     101: aload         21
+     103: aload         6
+     105: aload_3
+     106: aload         4
+     108: aload         5
+     110: iload         20
+     112: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     115: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     118: aload         21
+     120: aload_2
+     121: aload         7
+     123: aload         8
+     125: aload_1
+     126: iload         20
+     128: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     131: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     134: aload         21
+     136: aload_3
+     137: aload         6
+     139: aload         7
+     141: aload_2
+     142: iload         20
+     144: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     147: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     150: aload         21
+     152: aload_1
+     153: aload         8
+     155: aload         5
+     157: aload         4
+     159: iload         20
+     161: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     164: aload_0
+     165: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     168: invokevirtual #339                // Method mtr/data/TrainClient.getIsOnRoute:()Z
+     171: ifeq          180
+     174: ldc_w         #421                // int 15728816
+     177: goto          182
+     180: iload         20
+     182: istore        22
+     184: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     187: aload_0
+     188: iconst_1
+     189: ldc_w         #425                // String side
+     192: invokevirtual #411                // Method getConnectorTextureString:(ZLjava/lang/String;)Lnet/minecraft/class_2960;
+     195: invokestatic  #428                // Method mtr/render/MoreRenderLayers.getInterior:(Lnet/minecraft/class_2960;)Lnet/minecraft/class_1921;
+     198: invokeinterface #240,  2          // InterfaceMethod net/minecraft/class_4597.getBuffer:(Lnet/minecraft/class_1921;)Lnet/minecraft/class_4588;
+     203: astore        23
+     205: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     208: aload         23
+     210: aload         7
+     212: aload_2
+     213: aload_1
+     214: aload         8
+     216: iload         22
+     218: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     221: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     224: aload         23
+     226: aload_3
+     227: aload         6
+     229: aload         5
+     231: aload         4
+     233: iload         22
+     235: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     238: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     241: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     244: aload_0
+     245: iconst_1
+     246: ldc_w         #430                // String roof
+     249: invokevirtual #411                // Method getConnectorTextureString:(ZLjava/lang/String;)Lnet/minecraft/class_2960;
+     252: invokestatic  #428                // Method mtr/render/MoreRenderLayers.getInterior:(Lnet/minecraft/class_2960;)Lnet/minecraft/class_1921;
+     255: invokeinterface #240,  2          // InterfaceMethod net/minecraft/class_4597.getBuffer:(Lnet/minecraft/class_1921;)Lnet/minecraft/class_4588;
+     260: aload_2
+     261: aload         7
+     263: aload         6
+     265: aload_3
+     266: iload         22
+     268: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     271: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     274: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     277: aload_0
+     278: iconst_1
+     279: ldc_w         #432                // String floor
+     282: invokevirtual #411                // Method getConnectorTextureString:(ZLjava/lang/String;)Lnet/minecraft/class_2960;
+     285: invokestatic  #428                // Method mtr/render/MoreRenderLayers.getInterior:(Lnet/minecraft/class_2960;)Lnet/minecraft/class_1921;
+     288: invokeinterface #240,  2          // InterfaceMethod net/minecraft/class_4597.getBuffer:(Lnet/minecraft/class_1921;)Lnet/minecraft/class_4588;
+     293: aload         4
+     295: aload         5
+     297: aload         8
+     299: aload_1
+     300: iload         22
+     302: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     305: aload         19
+     307: getfield      #349                // Field mtr/client/TrainProperties.isJacobsBogie:Z
+     310: ifeq          414
+     313: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     316: invokevirtual #148                // Method net/minecraft/class_4587.method_22903:()V
+     319: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     322: dload         9
+     324: dload         11
+     326: dload         13
+     328: invokevirtual #152                // Method net/minecraft/class_4587.method_22904:(DDD)V
+     331: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     334: ldc           #153                // float 3.1415927f
+     336: fload         15
+     338: fadd
+     339: invokestatic  #159                // InterfaceMethod mtr/mappings/UtilitiesClient.rotateY:(Lnet/minecraft/class_4587;F)V
+     342: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     345: ldc           #153                // float 3.1415927f
+     347: fload         16
+     349: fconst_0
+     350: fcmpg
+     351: ifge          370
+     354: aload_0
+     355: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     358: getfield      #104                // Field mtr/data/TrainClient.transportMode:Lmtr/data/TransportMode;
+     361: getfield      #110                // Field mtr/data/TransportMode.hasPitchAscending:Z
+     364: ifeq          388
+     367: goto          383
+     370: aload_0
+     371: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     374: getfield      #104                // Field mtr/data/TrainClient.transportMode:Lmtr/data/TransportMode;
+     377: getfield      #113                // Field mtr/data/TransportMode.hasPitchDescending:Z
+     380: ifeq          388
+     383: fload         16
+     385: goto          389
+     388: fconst_0
+     389: fadd
+     390: invokestatic  #162                // InterfaceMethod mtr/mappings/UtilitiesClient.rotateX:(Lnet/minecraft/class_4587;F)V
+     393: getstatic     #351                // Field MODEL_BOGIE:Lmtr/model/ModelBogie;
+     396: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     399: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+     402: iload         20
+     404: iconst_0
+     405: invokevirtual #357                // Method mtr/model/ModelBogie.render:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;II)V
+     408: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     411: invokevirtual #380                // Method net/minecraft/class_4587.method_22909:()V
+     414: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     417: invokevirtual #380                // Method net/minecraft/class_4587.method_22909:()V
+     420: return
+
+  public void renderBarrier(net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, double, double, double, float, float);
+    Code:
+       0: aload_0
+       1: getfield      #52                 // Field trainBarrierId:Ljava/lang/String;
+       4: invokestatic  #442                // Method org/apache/commons/lang3/StringUtils.isEmpty:(Ljava/lang/CharSequence;)Z
+       7: ifeq          11
+      10: return
+      11: aload_0
+      12: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+      15: invokevirtual #133                // Method mtr/data/TrainClient.getViewOffset:()Lnet/minecraft/class_243;
+      18: dload         9
+      20: dload         11
+      22: dload         13
+      24: invokestatic  #137                // Method applyAverageTransform:(Lnet/minecraft/class_243;DDD)Lnet/minecraft/class_2338;
+      27: astore        17
+      29: aload         17
+      31: ifnonnull     35
+      34: return
+      35: getstatic     #166                // Field world:Lnet/minecraft/class_1937;
+      38: getstatic     #172                // Field net/minecraft/class_1944.field_9282:Lnet/minecraft/class_1944;
+      41: aload         17
+      43: invokevirtual #178                // Method net/minecraft/class_1937.method_8314:(Lnet/minecraft/class_1944;Lnet/minecraft/class_2338;)I
+      46: getstatic     #166                // Field world:Lnet/minecraft/class_1937;
+      49: getstatic     #181                // Field net/minecraft/class_1944.field_9284:Lnet/minecraft/class_1944;
+      52: aload         17
+      54: invokevirtual #178                // Method net/minecraft/class_1937.method_8314:(Lnet/minecraft/class_1944;Lnet/minecraft/class_2338;)I
+      57: invokestatic  #187                // Method net/minecraft/class_765.method_23687:(II)I
+      60: istore        18
+      62: getstatic     #208                // Field vertexConsumers:Lnet/minecraft/class_4597;
+      65: aload_0
+      66: iconst_0
+      67: ldc_w         #407                // String exterior
+      70: invokevirtual #411                // Method getConnectorTextureString:(ZLjava/lang/String;)Lnet/minecraft/class_2960;
+      73: invokestatic  #416                // Method mtr/render/MoreRenderLayers.getExterior:(Lnet/minecraft/class_2960;)Lnet/minecraft/class_1921;
+      76: invokeinterface #240,  2          // InterfaceMethod net/minecraft/class_4597.getBuffer:(Lnet/minecraft/class_1921;)Lnet/minecraft/class_4588;
+      81: astore        19
+      83: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+      86: aload         19
+      88: aload         6
+      90: aload_3
+      91: aload         4
+      93: aload         5
+      95: iload         18
+      97: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     100: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     103: aload         19
+     105: aload_2
+     106: aload         7
+     108: aload         8
+     110: aload_1
+     111: iload         18
+     113: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     116: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     119: aload         19
+     121: aload         7
+     123: aload_2
+     124: aload_1
+     125: aload         8
+     127: iload         18
+     129: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     132: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     135: aload         19
+     137: aload_3
+     138: aload         6
+     140: aload         5
+     142: aload         4
+     144: iload         18
+     146: invokestatic  #420                // Method drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;Lnet/minecraft/class_243;I)V
+     149: getstatic     #143                // Field matrices:Lnet/minecraft/class_4587;
+     152: invokevirtual #380                // Method net/minecraft/class_4587.method_22909:()V
+     155: return
+
+  public net.minecraft.class_2960 resolveTexture(java.lang.String, java.util.function.Function<java.lang.String, java.lang.String>);
+    Code:
+       0: aload_2
+       1: aload_1
+       2: invokeinterface #448,  2          // InterfaceMethod java/util/function/Function.apply:(Ljava/lang/Object;)Ljava/lang/Object;
+       7: checkcast     #127                // class java/lang/String
+      10: astore_3
+      11: new           #336                // class net/minecraft/class_2960
+      14: dup
+      15: aload_3
+      16: invokespecial #451                // Method net/minecraft/class_2960."<init>":(Ljava/lang/String;)V
+      19: astore        4
+      21: getstatic     #457                // Field mtr/render/RenderTrains.AVAILABLE_TEXTURES:Ljava/util/Set;
+      24: aload_3
+      25: invokeinterface #462,  2          // InterfaceMethod java/util/Set.contains:(Ljava/lang/Object;)Z
+      30: ifne          93
+      33: getstatic     #465                // Field mtr/render/RenderTrains.UNAVAILABLE_TEXTURES:Ljava/util/Set;
+      36: aload_3
+      37: invokeinterface #462,  2          // InterfaceMethod java/util/Set.contains:(Ljava/lang/Object;)Z
+      42: ifne          93
+      45: aload         4
+      47: invokestatic  #469                // InterfaceMethod mtr/mappings/UtilitiesClient.hasResource:(Lnet/minecraft/class_2960;)Z
+      50: istore        5
+      52: iload         5
+      54: ifeq          63
+      57: getstatic     #457                // Field mtr/render/RenderTrains.AVAILABLE_TEXTURES:Ljava/util/Set;
+      60: goto          66
+      63: getstatic     #465                // Field mtr/render/RenderTrains.UNAVAILABLE_TEXTURES:Ljava/util/Set;
+      66: aload_3
+      67: invokeinterface #472,  2          // InterfaceMethod java/util/Set.add:(Ljava/lang/Object;)Z
+      72: pop
+      73: iload         5
+      75: ifne          104
+      78: getstatic     #478                // Field java/lang/System.out:Ljava/io/PrintStream;
+      81: aload_3
+      82: invokedynamic #489,  0            // InvokeDynamic #2:makeConcatWithConstants:(Ljava/lang/String;)Ljava/lang/String;
+      87: invokevirtual #494                // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      90: goto          104
+      93: getstatic     #457                // Field mtr/render/RenderTrains.AVAILABLE_TEXTURES:Ljava/util/Set;
+      96: aload_3
+      97: invokeinterface #462,  2          // InterfaceMethod java/util/Set.contains:(Ljava/lang/Object;)Z
+     102: istore        5
+     104: iload         5
+     106: ifeq          112
+     109: aload         4
+     111: areturn
+     112: aload_0
+     113: getfield      #54                 // Field train:Lmtr/data/TrainClient;
+     116: getfield      #497                // Field mtr/data/TrainClient.baseTrainType:Ljava/lang/String;
+     119: invokestatic  #122                // Method mtr/client/TrainClientRegistry.getTrainProperties:(Ljava/lang/String;)Lmtr/client/TrainProperties;
+     122: getfield      #501                // Field mtr/client/TrainProperties.renderer:Lmtr/render/TrainRendererBase;
+     125: astore        6
+     127: new           #336                // class net/minecraft/class_2960
+     130: dup
+     131: aload         6
+     133: instanceof    #2                  // class mtr/render/JonModelTrainRenderer
+     136: ifne          145
+     139: ldc_w         #503                // String mtr:textures/block/transparent.png
+     142: goto          162
+     145: aload_2
+     146: aload         6
+     148: checkcast     #2                  // class mtr/render/JonModelTrainRenderer
+     151: getfield      #48                 // Field textureId:Ljava/lang/String;
+     154: invokeinterface #448,  2          // InterfaceMethod java/util/function/Function.apply:(Ljava/lang/Object;)Ljava/lang/Object;
+     159: checkcast     #127                // class java/lang/String
+     162: invokespecial #451                // Method net/minecraft/class_2960."<init>":(Ljava/lang/String;)V
+     165: areturn
+
+  private net.minecraft.class_2960 getConnectorTextureString(boolean, java.lang.String);
+    Code:
+       0: aload_0
+       1: iload_1
+       2: ifeq          12
+       5: aload_0
+       6: getfield      #50                 // Field gangwayConnectionId:Ljava/lang/String;
+       9: goto          16
+      12: aload_0
+      13: getfield      #52                 // Field trainBarrierId:Ljava/lang/String;
+      16: iload_1
+      17: aload_2
+      18: invokedynamic #519,  0            // InvokeDynamic #3:apply:(ZLjava/lang/String;)Ljava/util/function/Function;
+      23: invokevirtual #230                // Method resolveTexture:(Ljava/lang/String;Ljava/util/function/Function;)Lnet/minecraft/class_2960;
+      26: areturn
+
+  private static void drawTexture(net.minecraft.class_4587, net.minecraft.class_4588, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, net.minecraft.class_243, int);
+    Code:
+       0: aload_0
+       1: aload_1
+       2: aload_2
+       3: getfield      #526                // Field net/minecraft/class_243.field_1352:D
+       6: d2f
+       7: aload_2
+       8: getfield      #529                // Field net/minecraft/class_243.field_1351:D
+      11: d2f
+      12: aload_2
+      13: getfield      #532                // Field net/minecraft/class_243.field_1350:D
+      16: d2f
+      17: aload_3
+      18: getfield      #526                // Field net/minecraft/class_243.field_1352:D
+      21: d2f
+      22: aload_3
+      23: getfield      #529                // Field net/minecraft/class_243.field_1351:D
+      26: d2f
+      27: aload_3
+      28: getfield      #532                // Field net/minecraft/class_243.field_1350:D
+      31: d2f
+      32: aload         4
+      34: getfield      #526                // Field net/minecraft/class_243.field_1352:D
+      37: d2f
+      38: aload         4
+      40: getfield      #529                // Field net/minecraft/class_243.field_1351:D
+      43: d2f
+      44: aload         4
+      46: getfield      #532                // Field net/minecraft/class_243.field_1350:D
+      49: d2f
+      50: aload         5
+      52: getfield      #526                // Field net/minecraft/class_243.field_1352:D
+      55: d2f
+      56: aload         5
+      58: getfield      #529                // Field net/minecraft/class_243.field_1351:D
+      61: d2f
+      62: aload         5
+      64: getfield      #532                // Field net/minecraft/class_243.field_1350:D
+      67: d2f
+      68: fconst_0
+      69: fconst_0
+      70: fconst_1
+      71: fconst_1
+      72: getstatic     #538                // Field net/minecraft/class_2350.field_11036:Lnet/minecraft/class_2350;
+      75: iconst_m1
+      76: iload         6
+      78: invokestatic  #543                // InterfaceMethod mtr/client/IDrawing.drawTexture:(Lnet/minecraft/class_4587;Lnet/minecraft/class_4588;FFFFFFFFFFFFFFFFLnet/minecraft/class_2350;II)V
+      81: return
+
+  private static java.lang.String resolvePath(java.lang.String);
+    Code:
+       0: aload_0
+       1: ifnonnull     8
+       4: aconst_null
+       5: goto          23
+       8: aload_0
+       9: getstatic     #549                // Field java/util/Locale.ENGLISH:Ljava/util/Locale;
+      12: invokevirtual #553                // Method java/lang/String.toLowerCase:(Ljava/util/Locale;)Ljava/lang/String;
+      15: ldc_w         #555                // String \\.png
+      18: invokevirtual #559                // Method java/lang/String.split:(Ljava/lang/String;)[Ljava/lang/String;
+      21: iconst_0
+      22: aaload
+      23: areturn
+
+  private static java.lang.String lambda$getConnectorTextureString$2(boolean, java.lang.String, java.lang.String);
+    Code:
+       0: ldc_w         #561                // String %s_%s_%s.png
+       3: iconst_3
+       4: anewarray     #563                // class java/lang/Object
+       7: dup
+       8: iconst_0
+       9: aload_2
+      10: aastore
+      11: dup
+      12: iconst_1
+      13: iload_0
+      14: ifeq          23
+      17: ldc_w         #565                // String connector
+      20: goto          26
+      23: ldc_w         #569                // String barrier
+      26: aastore
+      27: dup
+      28: iconst_2
+      29: aload_1
+      30: aastore
+      31: invokestatic  #573                // Method java/lang/String.format:(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;
+      34: areturn
+
+  private static java.lang.String lambda$renderCar$1(java.lang.String);
+    Code:
+       0: aload_0
+       1: invokedynamic #576,  0            // InvokeDynamic #4:makeConcatWithConstants:(Ljava/lang/String;)Ljava/lang/String;
+       6: areturn
+
+  private static java.lang.String lambda$renderCar$0(java.lang.String);
+    Code:
+       0: aload_0
+       1: invokedynamic #576,  0            // InvokeDynamic #4:makeConcatWithConstants:(Ljava/lang/String;)Ljava/lang/String;
+       6: areturn
+
+  static {};
+    Code:
+       0: invokestatic  #581                // InterfaceMethod mtr/mappings/UtilitiesClient.getMinecartModel:()Lnet/minecraft/class_583;
+       3: putstatic     #202                // Field MODEL_MINECART:Lnet/minecraft/class_583;
+       6: invokestatic  #584                // InterfaceMethod mtr/mappings/UtilitiesClient.getBoatModel:()Lnet/minecraft/class_583;
+       9: putstatic     #200                // Field MODEL_BOAT:Lnet/minecraft/class_583;
+      12: new           #586                // class java/util/HashMap
+      15: dup
+      16: invokespecial #587                // Method java/util/HashMap."<init>":()V
+      19: putstatic     #242                // Field BOATS:Ljava/util/Map;
+      22: new           #374                // class mtr/model/ModelCableCarGrip
+      25: dup
+      26: invokespecial #588                // Method mtr/model/ModelCableCarGrip."<init>":()V
+      29: putstatic     #372                // Field MODEL_CABLE_CAR_GRIP:Lmtr/model/ModelCableCarGrip;
+      32: new           #353                // class mtr/model/ModelBogie
+      35: dup
+      36: invokespecial #589                // Method mtr/model/ModelBogie."<init>":()V
+      39: putstatic     #351                // Field MODEL_BOGIE:Lmtr/model/ModelBogie;
+      42: return
+}

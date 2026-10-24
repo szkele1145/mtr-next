@@ -1,0 +1,140 @@
+﻿Compiled from "ModelPart.java"
+public class net.minecraft.client.model.geom.ModelPart$Polygon {
+  public final net.minecraft.client.model.geom.ModelPart$Vertex[] vertices;
+
+  public final org.joml.Vector3f normal;
+
+  public net.minecraft.client.model.geom.ModelPart$Polygon(net.minecraft.client.model.geom.ModelPart$Vertex[], float, float, float, float, float, float, boolean, net.minecraft.core.Direction);
+    Code:
+       0: aload_0
+       1: invokespecial #33                 // Method java/lang/Object."<init>":()V
+       4: aload_0
+       5: aload_1
+       6: putfield      #35                 // Field vertices:[Lnet/minecraft/client/model/geom/ModelPart$Vertex;
+       9: fconst_0
+      10: fload         6
+      12: fdiv
+      13: fstore        10
+      15: fconst_0
+      16: fload         7
+      18: fdiv
+      19: fstore        11
+      21: aload_1
+      22: iconst_0
+      23: aload_1
+      24: iconst_0
+      25: aaload
+      26: fload         4
+      28: fload         6
+      30: fdiv
+      31: fload         10
+      33: fsub
+      34: fload_3
+      35: fload         7
+      37: fdiv
+      38: fload         11
+      40: fadd
+      41: invokevirtual #39                 // Method net/minecraft/client/model/geom/ModelPart$Vertex.remap:(FF)Lnet/minecraft/client/model/geom/ModelPart$Vertex;
+      44: aastore
+      45: aload_1
+      46: iconst_1
+      47: aload_1
+      48: iconst_1
+      49: aaload
+      50: fload_2
+      51: fload         6
+      53: fdiv
+      54: fload         10
+      56: fadd
+      57: fload_3
+      58: fload         7
+      60: fdiv
+      61: fload         11
+      63: fadd
+      64: invokevirtual #39                 // Method net/minecraft/client/model/geom/ModelPart$Vertex.remap:(FF)Lnet/minecraft/client/model/geom/ModelPart$Vertex;
+      67: aastore
+      68: aload_1
+      69: iconst_2
+      70: aload_1
+      71: iconst_2
+      72: aaload
+      73: fload_2
+      74: fload         6
+      76: fdiv
+      77: fload         10
+      79: fadd
+      80: fload         5
+      82: fload         7
+      84: fdiv
+      85: fload         11
+      87: fsub
+      88: invokevirtual #39                 // Method net/minecraft/client/model/geom/ModelPart$Vertex.remap:(FF)Lnet/minecraft/client/model/geom/ModelPart$Vertex;
+      91: aastore
+      92: aload_1
+      93: iconst_3
+      94: aload_1
+      95: iconst_3
+      96: aaload
+      97: fload         4
+      99: fload         6
+     101: fdiv
+     102: fload         10
+     104: fsub
+     105: fload         5
+     107: fload         7
+     109: fdiv
+     110: fload         11
+     112: fsub
+     113: invokevirtual #39                 // Method net/minecraft/client/model/geom/ModelPart$Vertex.remap:(FF)Lnet/minecraft/client/model/geom/ModelPart$Vertex;
+     116: aastore
+     117: iload         8
+     119: ifeq          174
+     122: aload_1
+     123: arraylength
+     124: istore        12
+     126: iconst_0
+     127: istore        13
+     129: iload         13
+     131: iload         12
+     133: iconst_2
+     134: idiv
+     135: if_icmpge     174
+     138: aload_1
+     139: iload         13
+     141: aaload
+     142: astore        14
+     144: aload_1
+     145: iload         13
+     147: aload_1
+     148: iload         12
+     150: iconst_1
+     151: isub
+     152: iload         13
+     154: isub
+     155: aaload
+     156: aastore
+     157: aload_1
+     158: iload         12
+     160: iconst_1
+     161: isub
+     162: iload         13
+     164: isub
+     165: aload         14
+     167: aastore
+     168: iinc          13, 1
+     171: goto          129
+     174: aload_0
+     175: aload         9
+     177: invokevirtual #46                 // Method net/minecraft/core/Direction.step:()Lorg/joml/Vector3f;
+     180: putfield      #48                 // Field normal:Lorg/joml/Vector3f;
+     183: iload         8
+     185: ifeq          200
+     188: aload_0
+     189: getfield      #48                 // Field normal:Lorg/joml/Vector3f;
+     192: ldc           #49                 // float -1.0f
+     194: fconst_1
+     195: fconst_1
+     196: invokevirtual #55                 // Method org/joml/Vector3f.mul:(FFF)Lorg/joml/Vector3f;
+     199: pop
+     200: return
+}

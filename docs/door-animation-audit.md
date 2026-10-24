@@ -1,0 +1,1044 @@
+# 门动画链路审查
+
+> 2026-10-15 初版；**2026-10-18 依据实测大幅修正**（推翻初版多处判断，见下）；
+> **2026-10-20 §4 四个开放问题全部关闭**——已取得 MTR 4.x 上游 MIT 源码并逐行比对，
+> 见 §4b；**2026-10-20 §五c 关闭 `flipped` 开放项**——`positionsFlipped` 镜像
+> 展开已实现（0.35.3），离线回归 **216 项全绿**，真实 ERIDU 车包端到端验证通过；
+> **2026-10-20 §五d 补齐门时序/闪烁字段**（0.35.4，纯数据层），并修正
+> **`DOOR_MOVE_TIME = 3200`**（此前误设为 500）。离线回归 **243 项全绿**。
+> **2026-10-20 §五e 记录 0.36.0 发布后的复核结果**，并留一条**尚未修复的真实
+> 偏差**：上游 `getInterpolatedDoorValue` 的 500 ms 门位移插值层未实现
+> （影响 ERIDU 全部 42 个门部件）。
+> **2026-10-20 §五f**：该插值层已在 0.36.2 实现并发布双渠道
+> （Modrinth `SpyfJ7xr` / GitHub `v0.36.2`）；并查明其真实语义——
+> **只在开门↔关门方向翻转时生效**，同方向变化不插值（与直觉相反）。
+> 另留两条待办：`opening` 应由门开度变化方向推导（现用布尔
+> `doorsOpen`）、门时序窗口/闪烁仍未接入渲染。
+> **2026-10-20 §五g**：0.36.3 已把门时序窗口与闪烁接入渲染、`opening`
+> 改为门开度变化方向；本节另记一条**语义偏差**——上游 flash 是
+> **per-part** 而非整层共享（ERIDU 上等价，其他车包可能出错）。
+
+## 一、3.x 内置渲染器的门动画（不迁移）
+
+3.x 的 `DoorAnimationType` 挂在 **ModelSimpleTrainBase**（内置车型渲染器）上——
+`CustomResources.reload` 从车包 JSON 读取该字段后传给
+`ModelSimpleTrainBase.doorAnimationType`（已读 `yomis-mtr` 源码确认）。
+
+`BbModelTrainRenderer` 是自定义 `TrainRendererBase`（**不在** `ModelSimpleTrainBase`
+继承链里），所以 3.x 的门解析路径**故意不迁移**。4.0 车包的门语义由
+`renderCar(..., boolean doorLeftOpen, boolean doorRightOpen)` 的两个布尔参数驱动
+（基类抽象签名已 javap 实证）。
+
+## 二、实测：当前门识别对 4.0 参考包完全失效
+
+用真实 4.0 参考包实测（`mtr-turbo/build/eridu-pack/assets/mtr/eridudanguei.bbmodel`，
+ERIDU-DG1000A，**970 个 elements**）：
+
+### 事实 1：elements[].name 不含门信息
+
+`elements[].name` 取值分布（实测）：`cube` 690、`cude` 57、`yj` 56、`8x` 45、
+`16x` 33、`qiang` 30、`bb` 28、`gueidao` 15、`fv` 8、`db` 6、`lcdred` 2。
+**没有任何一个含 "door"**。
+
+### 事实 2：门信息在 properties_*.json 的 parts[] 里
+
+4.0 包的门归属**不靠命名猜**，而是 `properties_*.json` 中每个 part 的显式字段。
+实测 eridu 包共 14 个 properties 文件，其中 42 个部件带非零门倍率：
+
+| 字段 | 实测取值 | 说明 |
+|---|---|---|
+| `names[]` | `men2`、`men3`、`door_n`、`doordengguan_n`、`lcdp_doorshanshuo` 等 | 匹配 **outliner 分组名**（已验证：65 个被引用的点名中 35 个命中 `eridudanguei` 的 outliner 组名，其余属同一车辆的其他层模型） |
+| `doorXMultiplier` | `0.0` / `1.0` | X 轴倍率 |
+| `doorZMultiplier` | **`men2`=+11.0、`men3`=−11.0**、`doordengshan_n`=0.01、`lcdp_doorshanshuo`=0.01 | Z 轴倍率；**左右门符号相反**（这是左右分离的权威依据） |
+| `doorAnimationType` | `STANDARD`、`STANDARD_SLOW` | 插值曲线选择 |
+| `condition` | `NORMAL`、`DOORS_CLOSED`、`DOORS_OPENED`、`AT_DEPOT`、`ON_ROUTE_FORWARDS`、`ON_ROUTE_BACKWARDS` | 渲染条件 |
+| `type` | `NORMAL`、`DOORWAY`、`FLOOR`、`DISPLAY` | 部件类别 |
+| `renderStage` | `EXTERIOR`、`INTERIOR`、`INTERIOR_TRANSLUCENT`、`LIGHT`、`ALWAYS_ON_LIGHT` | 渲染阶段 |
+
+（`doorZMultiplier` 的 ±11.0 是**像素**：men2 与 men3 一正一负，正好对应左右两扇门反向滑动。）
+
+### 事实 3：outliner 分组名承载门的命名
+
+`eridudanguei` 的 outliner 含 58 个分组名，其中门相关：`door`、`door2`、`door3`、
+`door_n`、`men2`、`men2_n`、`men3`、`men3_n`、`doordeng`、`doordengkai_n`、
+`doordengguan_n`、`doordengshan_n`、`doordiban`、`doorrmd`、`mengan`。
+
+**注意 `outliner` 的 `children` 是混合数组**：既可包含子分组对象，也可包含
+element 的 uuid 字符串（实测 `door` 组 21 个 children = 20 个 element uuid 字符串
++ 1 个子分组对象）。即：**必须按类型分支处理 children**，不能假定同质。
+
+### 结论：当前实现是静默失效
+
+`BbModelLoader.buildBox()` 用
+
+```java
+final boolean isDoor = name.toLowerCase(Locale.ROOT).contains("door");
+```
+
+判定，`name` 取自 **`element.name`**。对 4.0 参考包而言元素名全是 `cube` 之类，
+`isDoor` **恒为 false** → 门盒永不获得偏移 → 门动画从未生效。
+
+**连锁影响**：0.34.1 为编组预览加的"门开态 `-0.75F` 偏移"
+（`FormationPreviewRenderer` L68）同样恒为空转——它依赖同一个 `isDoor`。
+
+且 `Properties4xLoader`（114 行）只解析 `modelYOffset` + gangway/barrier 贴图与几何，
+**`parts[]` 完全没有解析**，`doorXMultiplier` / `doorZMultiplier` / `doorAnimationType`
+这些字段当前无人读取。
+
+这与 0.34.2 修掉的轨道预览 mixin 是同一类缺陷：**构建与运行都不报错，功能静默不存在**。
+
+## 三、反向核查：并非所有车包都失效
+
+实测 46 个 bbmodel（`element.name` 含 door 的个数 / `outliner` 组名含 door 的个数）：
+
+- **含 door 元素名**：`class_377`(33/23)、`r_train`(28/14)、`a_train`(27/23)、
+  `r211`(27/15)、`s_train`(22/15)、`london_underground_1995`(20/10)、`light_rail`(18/20)、
+  `sp1900`(18/12)、`cm_stock`(17/12)、`r179`(17/15)、`drl`(16/12)、`m_train`(16/11)、
+  `e44`(14/14)、`mlr`(12/11)、`mpl_85`(12/12)、`k_train`(12/14)、`london_underground_d78`(10/12)、
+  `class_802`(15/11)、`a320`(6/4)、`door_overlay`(6/4)、`br_423`(5/9)、`c_train`(8/10)、
+  `ngong_ping_360`(5/3)
+- **0 个**（含 door 命名）：`eridudanguei`、`dangueilcdxa`（仅组名有 2/10）、
+  `ac`、`passing_*` 系列、`belief_beacon`、`erailing_door`、`iron_frame`、`security_check_pole`、
+  `gaofengg`、`eridudgjiashimianban`、`lift_1`(仅组名 10)、`bogie_1`、`cable_car_grip`
+
+**因此不能说"门识别普遍失效"**。事实是：
+
+- 这些 bbmodel 位于 `yomis-mtr/models/`，其中带 `door_left_*` / `door_right_*` 命名的
+  （如 `sp1900.bbmodel`：`door_left_bottom`、`door_right_top_r2`、`driver_door_bottom_1`）
+  是 YMTR **内置 Java 模型**（`ModelATrain` / `ModelClass377` 等）的导出产物，
+  由 `JonModelTrainRenderer` + `DynamicTrainModel` 消费，**与 mtr-next 的 4.0 路径无关**。
+- mtr-next 消费的是 4.0 格式包（`models[]` 含 `modelResource`/`modelPropertiesResource`），
+  其参考样本 `eridu-pack` 恰好是元素名无 door 的那一类。
+
+## 四、仍未确认的事项（**已于 2026-10-20 全部关闭，见 §4b**）
+
+1. **`doorXMultiplier` / `doorZMultiplier` 的权威语义未确认**：
+   这两个字段在 `yomis-mtr`（YMTR 3.6.4.2 源码，版本与 `libs/ymtr-fabric-1.20.1.jar`
+   一致）中**搜索不到**。YMTR 3.x 用的是另一套：`DynamicTrainModel` 读
+   `door_offset` 枚举（`NONE`/`LEFT_POSITIVE`/`RIGHT_POSITIVE`/`LEFT_NEGATIVE`/`RIGHT_NEGATIVE`），
+   配合 `DoorAnimationType.getDoorAnimationX/Z` 计算偏移。
+   即 **4.0 包与 YMTR 3.x 是不同代的车包 schema**，4.0 的权威实现不在本项目手上。
+   需查 MTR 4.x 上游源码才能定论倍率单位与符号约定。
+2. **倍率单位未确认**：11.0 是像素还是格？bbmodel 坐标本身是像素（`eridudanguei`
+   整车 Z 跨 [-120, 126]），若 11 是像素则 ≈0.6875 格，与现有硬编码 `-0.75F` 同量级；
+   但这是**推测**，需上游确认。
+3. **`doorLeftOpen` / `doorRightOpen` 与倍率正负的映射未确认**：数据只给了
+   「`men2` 用 +11、`men3` 用 −11」，没说哪个对应 `doorLeftOpen`。
+4. **`drawBoxFaces` 只支持 Z 轴偏移**：其 `dz` 参数作用于全部 6 面的 `z` 分量
+   （L105-136）。而 4.0 数据同时含 `doorXMultiplier`，当前渲染路径无法表达 X 轴位移。
+
+## 四b、§4 四个问题的上游定论（2026-10-20 实证）
+
+**上游仓库已定位**：`Minecraft-Transit-Railway/Minecraft-Transit-Railway`
+（**MIT 许可**，默认分支 `master`，2026-07-16 有提交）。
+注意：先前尝试的 `MTRDev/MTR` **不存在**（GitHub API 返回 404，
+`api.github.com/users/MTRDev/repos` 只有无关的 `handlebars.js`）。
+上游源码快照存于 `docs/_upstream/`（仅供比对，不参与构建）。
+
+逐问回答：
+
+| §4 问题 | 上游定论 | 依据（上游文件:行） |
+|---|---|---|
+| **Q1** 倍率权威语义 | 4.0 权威实现在 MTR 4.x 上游，字段直读上游 `ModelPropertiesPart` schema；`isDoor()` = `doorXMultiplier != 0 \|\| doorZMultiplier != 0` | `ModelPropertiesPart.java:311-312` |
+| **Q2** 倍率单位 | **像素**（Blockbench 像素），渲染时 **/16 转格**。上游三处独立同款换算 | `ModelPropertiesPart.java:241-242`（`getOpenDoorBounds`）、`:524`（`addCube`）、`:536`（`addObjModelPosition`） |
+| **Q3** 左右映射 | 上游**不**用 `doorLeftOpen/RightOpen` 二分；门板靠**倍率符号**区分（ERIDU `men2`=+11 / `men3`=−11 天然对滑）。位移方向 = `copySign(abs曲线值, (flipped ? -1 : 1) * multiplier)`，flipped 来自 `positionDefinitions` 的 `positionsFlipped` | `DoorAnimationType.java:15-28`；`ModelPropertiesPart.java:649-650`（flipped 时 X/Z 整体镜像）、`:347-348` |
+| **Q4** X 轴位移 | 确认存在：塞拉门（`PLUG_FAST`/`PLUG_SLOW`/`PLUG_SLOW_2`/`PLUG_SLOW_3`）沿 **X 外摆** + 沿 **Z 滑动**；其余类型 X 恒 0 | `DoorAnimationType.java:32-43`（`getDoorAnimationXAbsolute`） |
+
+**连带确认的两项（本轮新发现，均为真实缺陷）**：
+
+- **尺度换算**：上游 `BlockbenchElement.setModelPart` 注释明写
+  "Normalize dimensions (16 Blockbench units = 1 Minecraft block)"，返回 `Box` 的
+  六个坐标**全部 /16**。mtr-next 0.34.3 之前**未做此换算** → 车体比实际大 16 倍。
+  （上游 `docs/_upstream/BlockbenchElement.java:51-58`）
+- **UV 归一化除数**：上游用 bbmodel 自身 `resolution`
+  （`BlockbenchModel.getTextureWidth/Height` ← `BlockbenchResolution`），
+  而非固定 24。实测 ERIDU 四个模型 resolution = **512 / 128 / 24 / 64**，
+  `eridudanguei` 的 UV 最大值 u=384、v=448 —— 旧代码硬编码 `/24` 会让 UV
+  **严重越界**（u 最大到 16.0），贴图整体错位。3.x 时代的 `24` 是 MC 方块贴图
+  边长，对 bbmodel 不适用。
+
+## 五、已实现（0.35）
+
+1. `Properties4xLoader.parseParts` 解析 `parts[]`
+   （`names[]`/`doorXMultiplier`/`doorZMultiplier`/`doorAnimationType`/`condition`/`type`）。
+2. `BbModelLoader.walkOutliner` 记录每个 element 的**祖先分组名链**，
+   `annotate` 按组名匹配 parts 并把倍率/动画型写入盒字段。
+3. `DoorAnimation4x` 逐分支移植上游 `DoorAnimationType`（12 个枚举值，
+   含 3.x 没有的 `PLUG_SLOW_2`/`PLUG_SLOW_3`），签名带 `flipped`，
+   `copySign` 语义与上游一致。
+4. `BbModelLoader.buildBox` 坐标 **/16**（上游 `BlockbenchElement` 同源）；
+   UV 除数改为 per-model `resolution`。
+5. `BbModelTrainRenderer.drawBoxFaces` 扩展为 **X/Z 双轴**位移；
+   `renderCar` 按 `isAnimatedDoor()` 走上游曲线，否则沿用旧固定偏移。
+6. `ParserSelfTest` 增至 **155 项**（新增门曲线 40+ 项、尺度/UV 13 项、门标注 17 项）。
+
+**曾开放、0.35.3 已关闭**：`flipped` 恒为 `false`——mtr-next 当时尚未实现上游
+`positionDefinitions` 的 `positionsFlipped` 位置组。**0.35.3 已实现**，见 §五c。
+
+### 附：`flipTextureV` 已定论（2026-10-20 上游实证）——**不实装是正确的**
+
+上游 `VehicleModel.createModel` 的分支（`VehicleModel.java:114-150`）：
+
+```java
+if (modelResource.endsWith(".bbmodel")) {
+    return new DynamicVehicleModel(new BlockbenchModel(...), textureId, modelProperties, positionDefinitions, id);
+    //                                    ↑ 构造器签名里没有 flipTextureV
+} else if (ModelResourceLoader.isSupportedModelResource(modelResource)) {
+    return new DynamicVehicleModel(ModelResourceLoader.loadModel(modelResource, textureId, flipTextureV, ...), ...);
+    //                                                                      ↑ 只有 .obj/.mqo/.mqoz 路径接收
+}
+```
+
+即 **上游对 bbmodel 同样不消费 `flipTextureV`**——该字段只影响 OBJ/MQO 的
+UV 导入（`ModelResourceLoader.loadModel` → `OptimizedModel.ObjModel.loadModel`）。
+Blockbench 导出的 UV 原点本就与 MC 一致，无需翻转。
+mtr-next 不实装该字段 = **与上游行为一致**，不是遗漏。
+
+## 五b、已实现（0.35.2 追加）
+
+**门重叠离线检测**（上游 `DynamicVehicleModel.testDoors` 的移植，
+`DynamicVehicleModel.java:119-145`）：模拟门从 t=0 到 t=1 走 5 个时间片，
+若两扇门"初始不相交、中途相交"，说明门 X/Z 倍率配错（车包作者配置错误），
+上游打 WARN。移植为 `BbModelLoader.detectDoorOverlaps(boxes)`，纯数据逻辑可离线回归。
+
+**本次实测得出的两条算法事实**（已写进测试用例）：
+
+1. **同向同量滑动的两扇门永远不会相撞**——相对距离恒定。故能触发告警的
+   错误配置是**倍率不等**（快门追上慢门），不是"同向"。
+2. ERIDU 的 +11/−11 反向对滑配置，两门**初始包围盒本就相交**（实测 men2
+   z 跨 [-56.8, 63.5]、men3 z 跨 [-59.5, 40.0] 像素）→ 上游"初始相交则跳过"
+   分支会直接放过，不误报。
+
+> 由此可知上游 `testDoors` 的实际覆盖能力有限：它只能发现"倍率明显配错"的
+> 极端情形，对 ERIDU 这类正确配置无诊断价值。移植保留其语义，不夸大其作用。
+
+## 五c、已实现（0.35.3 追加）：`positionsFlipped` 镜像展开
+
+### 上游语义（逐行实证）
+
+| 上游位置 | 代码 | 语义 |
+|---|---|---|
+| `ModelPropertiesPart.java:654-656` | `iteratePositions(positions, positionsFlipped, cb)`：`positions` → `cb(..., false)`；`positionsFlipped` → `cb(-x, y, z, true)` | **两个列表都渲染**，不是二选一；翻转槽的 X 取反且 `flipped=true` |
+| `ModelPropertiesPart.java:364` | `modelPart.render(..., partDetails.flipped ? (float) Math.PI : 0, ...)` | 翻转副本**绕 Y 轴转 180°** |
+| `ModelPropertiesPart.java:649-650` | `addBox`: `(flipped ? -1 : 1) * minX + x/16`、`(flipped ? 1 : -1) * minZ + z/16` | 包围盒同步镜像 **X 与 Z** |
+| `DoorAnimationType.java:25,29` | `Math.copySign(abs, (flipped ? -1 : 1) * multiplier)` | 门位移方向随 `flipped` **反号** |
+| `DynamicVehicleModel.java:41-62` | `nameToPart.put(blockbenchOutline.getName(), ...)` | 镜像粒度 = **整个顶层 outliner 组** |
+
+刚体绕 Y 轴转 180° 保定向 ⇒ 顶点逐点 `(x,z)→(−x,−z)`，每面的绕向（winding）
+需同步反转，UV 跟面走不变。
+
+### 实测事实（ERIDU 车包）
+
+- `eridudanguei.bbmodel` 970 元素；`men2`/`men3`/`win`/`door` 等顶层组
+  **几何只建了 +X 半边**：`men2` x∈[19,20]px、`men3` x∈[20,21.52]px、
+  `win` 右 24 盒 / 左 0 盒。另一侧完全靠 flipped 副本补齐。
+- ⇒ **0.35.2 及以前左半侧车门/车窗/门灯/门地板全部不渲染**。
+- 189 个 positionDefinitions 中 143 个含非空 `positionsFlipped`，
+  43 个只有 `positionsFlipped`（无正位）。
+- 64 个顶层组引用了含翻转位的位定义，**全部是多记录**（同一 `names`
+  被 NORMAL 位记录与 FLIPPED 位记录各引用一次）；其中 59 组门参数
+  完全一致，6 组不一致的是**不同 properties 文件**的 `condition` 差异
+  （`ON_ROUTE_FORWARDS`/`ON_ROUTE_BACKWARDS`，车头/车尾朝向），
+  分属不同层模型，不是同一部件的两侧。
+- 实测需镜像的顶层组 **17/36**。
+
+### mtr-next 实现
+
+- 新增 `PositionDefinitions4xLoader`：`definition_*.json` → 名字 →
+  `PositionGroup{positions, positionsFlipped}`（`flippedOnly()`/`hasNormal()`）。
+- `Properties4xLoader.PartInfo` 增加 `positionDefinitionNames`。
+- `VehicleResource.ModelLayer` 增加 `positionDefinitionsResource`。
+- `BbModelLoader`：`BbBox` 增 `topGroup`/`singleSidedGroup`/`mirrorNeeded`/
+  `doorFlipped`；`buildBoxes` 统计各顶层组 X 侧分布；`annotate` **双条件**
+  判定镜像；`loadAnnotated` 第三缓存键。
+- `BbModelTrainRenderer.drawBoxFaces(..., mirror)`：镜像时 `(x,z)→(−x,−z)`
+  且每面 winding 反转；`drawMirrorPair`：本体 `flipped=false`、
+  镜像 `flipped=true`（由上游 `copySign` 自动反号）。
+- `FormationPreviewRenderer` 同步。
+
+### 与上游的一处有意偏离：对称组跳过镜像
+
+上游对 `end`/`hand` 等**本就左右对称**的组也会画 flipped 副本，落点与
+对面正本重叠（Z-fighting / 重复面）。mtr-next 用 `singleSidedGroup`
+（该顶层组的盒是否只落在 X 一侧）跳过这些组。
+
+这是**渲染优化取舍，不是语义修正**：重叠副本在视觉上与单份不可区分，
+但会浪费 2× 顶点并引入深度冲突。若日后发现某对称组依赖重叠副本
+（例如两侧 UV 不同），此判定需回退。
+
+### 验证
+
+- 离线自测 **PASS=216 FAIL=0**（新增 33 条）。
+- 真实 ERIDU 车包端到端（`ParserSelfTest.testRealPackMirror`）：
+  8 个门/窗组全部判为需镜像；`end`/`end_n`/`hand`/`hand_n` 判为
+  双侧组不镜像；`men2` dz=+11 / `men3` dz=−11 与实测一致。
+- **边界**：headless 环境无法验证客户端渲染观感——镜像的顶点变换、
+  winding、门位移符号均有上游源码逐行对应，且真实车包验证了判定逻辑，
+  但"左半侧车门看起来正确"仍需图形客户端确认
+  （见 `docs/client-verification-boundary.md`）。
+
+## 五d、已实现（0.35.4 追加）：门时序窗口与闪烁（数据层）
+
+### 触发线索：上游 schema 的权威字段清单
+
+上游 `modelPropertiesPart.json`（MIT 仓库
+`Minecraft-Transit-Railway/Minecraft-Transit-Railway`，路径
+`buildSrc/src/main/resources/schema/resource/modelPropertiesPart.json`，
+原始 2763 B）列出 **25 个字段**。mtr-next 的 `PartInfo` 此前只读 8 个。
+新增补上的 6 个：
+
+| 字段 | 上游消费点 | 语义 |
+|---|---|---|
+| `renderFromOpeningDoorTime` | `ModelPropertiesPart.java:342` | 开门时的渲染窗口下界（ms） |
+| `renderUntilOpeningDoorTime` | 同上 | 开门时的渲染窗口上界（ms） |
+| `renderFromClosingDoorTime` | `ModelPropertiesPart.java:344` | 关门时的窗口下界（ms） |
+| `renderUntilClosingDoorTime` | 同上 | 关门时的窗口上界（ms） |
+| `flashOnTime` | `ModelPropertiesPart.java:317` | 闪烁周期亮段（ms） |
+| `flashOffTime` | 同上 | 闪烁周期灭段（ms） |
+
+> 此前 `docs/_upstream/modelPropertiesPart.json` 的副本是被 PowerShell
+> 对象化后写坏的 139 B 版本，本版用 `Invoke-WebRequest`（而非
+> `Invoke-RestMethod`）取原始字节重取，并校验长度与 GitHub tree
+> 报告的 size 一致。
+
+### 上游语义
+
+```java
+// ModelPropertiesPart.java:342-345
+if (opening) {
+    shouldRender = renderFromOpeningDoorTime == 0 && renderUntilOpeningDoorTime == 0
+        || Utilities.isBetween(Math.abs(doorValue) * Vehicle.DOOR_MOVE_TIME,
+                               renderFromOpeningDoorTime, renderUntilOpeningDoorTime);
+} else {
+    shouldRender = renderFromClosingDoorTime == 0 && renderUntilClosingDoorTime == 0
+        || Utilities.isBetween(Math.abs(doorValue) * Vehicle.DOOR_MOVE_TIME,
+                               renderFromClosingDoorTime, renderUntilClosingDoorTime);
+}
+
+// ModelPropertiesPart.java:317
+final boolean flashOn = flashOnTime + flashOffTime == 0
+    || (System.currentTimeMillis() % (flashOnTime + flashOffTime)) > flashOffTime;
+// 不闪时：y = Integer.MAX_VALUE（移出视野），不是跳过绘制
+```
+
+### 关键常量修正：`DOOR_MOVE_TIME = 3200`
+
+**此前一直假定门行程是 500 ms——错了。** 上游定义在
+`Transport-Simulation-Core` 仓库（**不在** `Minecraft-Transit-Railway`
+仓库里——那个仓库只有 `fabric/`/`forge/`/`buildSrc/`，core 是独立仓库）：
+
+```
+Transport-Simulation-Core/src/main/java/org/mtr/core/data/Vehicle.java:59
+  public static final int DOOR_MOVE_TIME = 3200;
+```
+
+`isBetween` 语义（`core/tool/Utilities.java:61-63`）：
+`value >= min(v1,v2) && value <= max(v1,v2)`——**倒序区间同样成立**。
+
+已取快照到 `docs/_upstream/core_Vehicle.java` 与 `core_Utilities.java`。
+
+### ERIDU 实测：这些字段确有非零值（39 个非零条目）
+
+| 部件 | 字段 | 值 |
+|---|---|---|
+| `doordengguan_n` | `renderFromOpeningDoorTime` / `renderFromClosingDoorTime` | 100 / 100 |
+| `doordengshan_n` | `renderFromOpeningDoorTime` | 50 |
+| `doordengshan_n` | `flashOnTime` / `flashOffTime` | 500 / 500 |
+| `lcdp_dooryincang` | `renderFromOpeningDoorTime` / `renderFromClosingDoorTime` | 1 / 1 |
+| `lcdp_doorshanshuo` | `flashOnTime` / `flashOffTime` | 800 / 800 |
+
+语义解读：**部件只在门行程落在 [from, until] 毫秒窗口内才渲染**。
+`until = 0` 时窗口是 `[0, from]`（因 `isBetween` 取 min/max）——
+即"门刚开始动的一小段"。典型用途：门灯管只在开门最初 100 ms 显示。
+
+### mtr-next 实现（0.35.4，纯数据层）
+
+- `Properties4xLoader.PartInfo` 增 6 个字段 + 两个判定方法：
+  `shouldRenderAt(doorValue, opening)`、`flashOn(currentTimeMillis)`。
+- `PartInfo.DOOR_MOVE_TIME = 3200.0` 常量（与上游一致）。
+- 离线自测 **PASS=243 FAIL=0**（新增 27 条，含 ERIDU 真实取值）。
+
+### 边界（务必读）
+
+**渲染端尚未接入** `shouldRenderAt` / `flashOn`——本次只做数据层。
+渲染接入需等另一条进行中的渲染重构（bbmodel → MC 原生 `ModelPart`
+树）定型后再做，否则两条渲染路径会打架。
+
+## 五e、0.36.0 发布后复核（2026-10-20 09:42）
+
+### 发布事实
+
+0.35.4 的数据层已被 **0.36.0**（bbmodel → MC 原生 `ModelPart` 树）吸收，
+双方渠道均已发布并校验：
+
+| 渠道 | 标识 | 文件大小 | sha512 |
+|---|---|---|---|
+| Modrinth | 版本 id `gqItNHdg` | 100841 B | `e062c922…7540a65b…` |
+| GitHub | release `417915159` / tag `v0.36.0` | 100841 B | 同上（**双渠道一致**） |
+
+GitHub 下载回读与 Modrinth 声明的 sha512 **逐字节相同**。
+
+**已确认 0.36.0 的 jar 内包含 0.35.4 的全部成果**（反编译类常量池校验）：
+`Properties4xLoader$PartInfo` 含 `shouldRenderAt`、`flashOn`、
+`DOOR_MOVE_TIME`、`renderFromOpeningDoorTime`、`renderUntilOpeningDoorTime`、
+`renderFromClosingDoorTime`、`renderUntilClosingDoorTime`、
+`flashOnTime`、`flashOffTime`、`positionDefinitionNames`。
+
+**0.36.0 未回退 0.35.3 的能力**：`positionsFlipped` 在新渲染路径
+（`BbModelTrainRenderer` L135 / `FormationPreviewRenderer` L100）仍被消费；
+`DoorAnimation4x` 仍被两条路径使用。
+
+### 未修复的真实偏差：上游 500 ms 门位移插值层
+
+**上游**（`ModelPropertiesPart.java:348`）：
+
+```java
+z = shouldRender ? (float) (partDetails.z
+      + (canOpen
+         ? vehicle.persistentVehicleData.getInterpolatedDoorValue(
+               doorAnimationType, doorZMultiplier, partDetails.flipped,
+               doorOverrideValue, opening)
+         : 0))
+  : Integer.MAX_VALUE;
+```
+
+`getInterpolatedDoorValue`（`PersistentVehicleData.java:98-113`）先算曲线值，
+再过一层 `DoorMovementInterpolation`（同文件 L164-178）：
+
+```java
+private static class DoorMovementInterpolation {
+    private boolean opening;
+    private final Interpolation interpolation = new Interpolation(500); // 500 ms
+
+    private float setAndGet(double value, boolean opening) {
+        interpolation.setValue(value, this.opening != opening); // 方向翻转 → 重启插值
+        this.opening = opening;
+        return (float) interpolation.getValue();
+    }
+}
+```
+
+`Interpolation`（上游 `org.mtr.mod.resource.Interpolation`，快照
+`docs/_upstream/Interpolation.java`）是**线性**混合：
+
+```java
+final long difference = System.currentTimeMillis() - startMillis;
+if (difference < duration) {
+    return (1 - difference / duration) * oldValue
+         + difference / duration * latestValue;
+} else { oldValue = latestValue; return latestValue; }
+```
+
+**mtr-next 现状**（`BbModelTrainRenderer.java:184`）：
+
+```java
+anim.getDoorAnimationZ(info.doorZMultiplier, flipped, time, doorsOpen)
+```
+
+——**直接用曲线值，没有 500 ms 插值层**。
+
+**影响面**：ERIDU 实测门部件共 42 个（`STANDARD` 18 + `STANDARD_SLOW` 24），
+上游对**所有**部件统一走 `getInterpolatedDoorValue`，故**全部受影响**。
+视觉表现：门启动瞬间位置不是从曲线值瞬跳，而是 500 ms 线性过渡；
+门开↔关方向翻转时同样有过渡。上游这层的作用就是消除曲线值在方向
+翻转处的跳变。
+
+**尚未修复的原因**：0.36.0 的渲染路径由另一条会话的重构产出，
+插值层需要 per-（部件记录 × 位置实例 × 方向）的有状态对象，
+与重构中的 `BbModelTree` 状态管理耦合，需要在同一状态机里实现。
+
+**修复方案（待实施）**：
+1. 新增 `DoorMovementInterpolation` 等价类（500 ms 线性，
+   方向翻转时 `oldValue = 当前插值值; startMillis = now`）；
+2. 上游的 key 是 `doorZMultiplier + "_" + doorAnimationType + "_" + flipped`
+   ——即**每个（倍率, 类型, 翻转）组合一个插值器**，
+   缓存于 `PersistentVehicleData.doorMovementInterpolations`；
+   mtr-next 需在渲染侧维护同样的 per-key 缓存；
+3. `getDoorAnimationX`（上游 L347）**不走**插值层，只走 `getInterpolatedDoorValue`
+   （即 Z）走——注意 X 与 Z 的差别。
+
+### 另一处待核（低优先级）
+
+`BbModelTree.addElement`（L508-510）算出的 `centerX/Y/Z` **不含元素旋转**：
+
+```java
+final float centerX = (x + sizeX / 2.0F) / 16.0F;
+```
+
+而上游同名概念的 `Box`（`BlockbenchElement.java:48-58`）会把两个角点
+`rotateX/rotateY/rotateZ` 后再取边界。实测 ERIDU：787/970 元素（81%）
+带非零旋转，其中 779 个的 center 偏移 > 0.01 格，中位 0.51 格、最大 6.5 格。
+
+**但该字段当前仅被测试断言使用，渲染路径不消费**（渲染由 MC 的
+`ModelPart` 姿态系统处理旋转），因此**不是渲染缺陷**，只是元数据
+与上游 `Box` 语义不符。修复前应先确认 `center` 的用途。
+
+## 五f、0.36.2 发布与插值层的真实语义（2026-10-20 10:17）
+
+### 发布事实
+
+| 渠道 | 标识 | 大小 | sha512 回读 |
+|---|---|---|---|
+| Modrinth | 版本 id `SpyfJ7xr` | 103249 B | ✅ 与本地一致 |
+| GitHub | release `417932491` / 资产 `658022617` / tag `v0.36.2` | 103249 B | ✅ 与本地一致 |
+
+sha512：`3cb2593a27cb8e8ec5f4ea27d78d5b35d0630b1e939a77e884d83e2dd404d40cbe6505679ce978a168996937c7c1509984d75be0fccfd78a0c49858f8f4cb27e`
+
+tag `v0.36.2` → `a390c6a`（测试提交）。此后 0.36.2 的实现提交被 amend
+为 `f8efcc1`（把发布脚本并入），`a390c6a` 仍是其祖先，tag 有效。
+
+验证：`parserSelfTest` PASS=254 FAIL=0；`bbModelTreeTest` PASS=46 FAIL=0；
+构建 0 警告。
+
+### 插值层的真实语义：**只在方向翻转时生效**（与直觉相反）
+
+写回归测试时按直觉写的三条期望全错，实测后按上游真实行为更正。
+关键在 `Interpolation.setValue`：
+
+```java
+public void setValue(double value, boolean startInterpolation) {
+    if (startInterpolation && oldValue != value) {   // ← 只在 startInterpolation 为真时才检查
+        oldValue = getValue();
+        startMillis = System.currentTimeMillis();     // ← startMillis 仅此时更新
+    }
+    latestValue = value;
+}
+```
+
+而 `setAndGet` 的 `startInterpolation` 参数是 `this.opening != opening`
+——**仅在开关方向翻转时为真**。
+
+推论：
+
+1. **同方向连续变化不产生任何过渡**——`startMillis` 不变，
+   `difference` 持续增长，超出 500 ms 后 `getValue()` 直接返回
+   `latestValue`。
+2. **过渡只在开门↔关门方向翻转的那一刻发生**：翻转时
+   `oldValue = getValue()`（当前插值结果），`startMillis = now`，
+   于是从当前值用 500 ms 线性走到新曲线值，**不跳变**。
+3. **首次调用返回 0**（不是曲线值）：初始 `oldValue = 0`、
+   `startMillis = 0`；`setAndGet(v, opening≠初始 opening)` 触发重启，
+   `oldValue = getValue() = 0`，同毫秒内 `getValue()` 返回 `oldValue`。
+   即插值器从 0 起步。
+
+**这正是上游这层插值的意义**：门动画曲线在方向翻转处（如
+`STANDARD_SLOW` 开门↔关门两套分段曲线交替）会跳变，插值层抹平这个跳变。
+
+### mtr-next 与上游的 `opening` 语义差异（尚未修，已记录）
+
+| | 上游 | mtr-next |
+|---|---|---|
+| `opening` 来源 | `getAdjustedDoorMultiplier(...) > 0`（**门运动方向**，`ModelPropertiesPart.java:338`） | `doorsOpen`（**门是否处于打开状态**） |
+
+两者在"门开↔关翻转"时刻都会翻转，故**插值效果等价**；
+但曲线分支选择不完全等价——上游 `STANDARD_SLOW` 的
+`!opening` 分支是**关门专用的分段曲线**（`DoorAnimationType.java:142-151`），
+mtr-next 传 `doorsOpen` 时，门关闭期间（`time = 0`）两条分支都得 0，
+视觉无差；但"门正在关"这一瞬间，若 `doorsOpen` 仍为 true，
+mtr-next 会走开门分支而上游走关门分支。
+
+ERIDU 实测门部件 42 个（`STANDARD` 18 + `STANDARD_SLOW` 24），
+`STANDARD_SLOW` 的关门分段曲线在 mtr-next 当前模型下未被触发。
+
+**待办**：把 `opening` 改为由门开度的**变化方向**推导
+（`doorValue` 相对上一帧上升 = opening，下降 = 关门），
+而不是用布尔 `doorsOpen`。这需要 per-列车的上一帧门开度状态。
+
+### 门时序窗口与闪烁仍未接入渲染
+
+0.35.4 已实现 `PartInfo.shouldRenderAt` / `flashOn`，但 0.36.x 的渲染路径
+**尚未调用它们**——`BbModelTrainRenderer` 目前无条件渲染所有部件。
+上游语义是"部件只在门行程落在 [from, until] 毫秒窗口内才渲染"
+（ERIDU 的 `doordengguan_n` from=100、`doordengshan_n` from=50 +
+flash 500/500、`lcdp_dooryincang` from=1）。
+
+这需要在渲染循环里拿到每帧的 `doorValue` 与 `opening` 方向后调用，
+与上面的 `opening` 语义修复合并处理更合适。
+
+因此 0.35.4 **不发版**：工作区当时含另一会话未完成的渲染重构，
+构建产物会混入未验证代码；且纯数据层改动对用户无可见价值。
+
+---
+
+## 五g、0.36.3：三项语义对齐已落地（2026-10-20 10:45）
+
+§五f 记录的两项待修（`opening` 语义、门时序窗口/闪烁未接入）已在 **0.36.3**
+一并修完。权威依据是上游 `ModelPropertiesPart.java:315-349`（`renderNormal` 全流程）。
+
+### 发布事实
+
+| 渠道 | 标识 |
+|---|---|
+| Modrinth | `0.36.3` / `QNLMUL7d` / 104278 B |
+| GitHub | `v0.36.3` / release `417948163` / asset `658075285` |
+| 提交 | `6c35d89` |
+| 自测 | `parserSelfTest` PASS=259 FAIL=0；`bbModelTreeTest` PASS=46 FAIL=0 |
+
+### 改动 1：`opening` = 门**运动方向**
+
+上游 L338：`opening = getAdjustedDoorMultiplier(...) > 0`（+1 开门 / -1 关门）。
+
+mtr-next 此前传 `doorsOpen`（门当前是否打开）。两个后果：
+
+1. **关门专用分段曲线永远取不到**。
+   `STANDARD_SLOW` 在 `!opening` 时走 `DoorAnimationType.java:142-151`：
+   ```
+   if (time > 0.2) return smoothEnds(1, doorMax, 0.2, 0.5, time);
+   else if (time > 0.1) return 1;
+   else return smoothEnds(0, 1, 0, 0.1, time);
+   ```
+   开门分支则 fall through 到 default 的 `smoothEnds(0, doorMax, 0, 0.5, time)`。
+   两者在 **t=0.15 处分别是 1 和 3.3** —— 传错 `opening` 会让关门时门**跳一下**。
+2. **门时序窗口选错分支**（opening 窗口 vs closing 窗口）。
+
+现改为：由门开度的**变化方向**推导（比上一帧大 = 开门中），
+每车保存一份上一帧门开度（`BbModelTrainRenderer.previousDoorValue`）。
+
+> YMTR 的 `renderCar` 只给 `doorLeftOpen` / `doorRightOpen` 两个布尔，
+> 没有方向信息 —— 这是与上游唯一的**接口层**差异，方向只能由变化率推导。
+
+### 改动 2：曲线的时间参数就是门开度本身
+
+上游 L347 传 `Math.max(doorValue, doorOverrideValue)` —— 是门开度，不是布尔。
+
+mtr-next 此前 `time = doorsOpen ? doorValue : 0.0F`，门关闭期间曲线被钉死在 0。
+现改为 `time = |doorValue|`：门开度随时间递减 → 曲线自然回退，
+关门专用曲线得以生效。
+
+### 改动 3：门时序窗口与闪烁接入渲染
+
+0.35.4 已实现 `PartInfo.shouldRenderAt` / `flashOn`，但**渲染路径从未调用**
+（此前所有部件无条件渲染）。现接上：
+
+| 上游位置 | 语义 | mtr-next 实现 |
+|---|---|---|
+| L339-345 | 门行程落在 `[from, until]` 毫秒窗口外 → 不渲染该部件 | `info.shouldRenderAt(doorValue, opening)` |
+| L317 / L320 | 闪烁熄灭 → `y = Integer.MAX_VALUE` | `info.flashOn(now)` |
+| L348 | `shouldRender` 为假 → `x = z = Integer.MAX_VALUE` | 推离视野 |
+
+**「推离视野」而非跳过绘制**：上游这么做是为了保持渲染批次与光照计算一致，
+本实现照做（`drawInstance` 中改 `ox/oy/oz`）。
+
+**闪烁是 per-part，不是整层**（**0.36.4 修正**）：
+
+上游 `ModelPropertiesPartWrapper.toModelPropertiesPartAndPositionDefinition`
+（L80-105）为**每条 wrapper** 创建 `new ModelPropertiesPart(...)` 并传入
+**它自己的** `flashOnTime`/`flashOffTime`；`ModelPropertiesPart.renderNormal`
+L317 读的正是**本实例**的字段。
+
+⇒ 闪烁判定是**部件级**的。0.36.3 曾误实现为「整层取第一条带 flash 配置的部件」，
+0.36.4 改为每个部件用 `info.flashOn(now)` 独立判定。
+
+实测（`tools/verify_flash_semantics.js`，ERIDU 14 个 properties 文件）：
+189 个部件记录中仅 **6 个**带非零 flash 配置，且**每个文件只有 1 个部件**带配置
+（`doordengshan_n` 500/500、`lcdp_doorshanshuo` 800/800）。
+⇒ 本车包上两种实现视觉等价，但对其他车包有差别 —— 修正是必要的。
+
+ERIDU 实测命中：`doordengguan_n` from=100、`doordengshan_n` from=50 + flash 500/500、
+`lcdp_dooryincang` from=1。
+
+### 边界
+
+- `shouldRenderAt` 的区间判定与上游 `core_Utilities.java:61-63` 的 `isBetween`
+  **完全一致**（含边界、支持倒序区间）。
+- `DOOR_MOVE_TIME = 3200` 毫秒（`core/data/Vehicle.java:59`）作为门开度→毫秒的尺度。
+- **仍未覆盖**：`doorOverrideValue`（上游的开门道调试覆盖，YMTR 无对应接口）、
+  `openDoorways` 的逐部件匹配（上游按 Box 匹配门道）、`canOpen` 判定。
+  这三项上游能力在 YMTR 宿主下没有输入，**不是 bug，是宿主差异**。
+
+## 五h、0.36.5：门重叠检测复刻上游 `testDoors` + 顶层组语义修正（2026-10-21 01:00）
+
+### 发布事实
+
+- Modrinth `jUmZS1kp`：`0.36.5` = **`UwacCrL6`**，100679 B，sha512 `ffb63b91…89b5`
+- GitHub `szkele1145/mtr-next`：`v0.36.5` = release **`418691209`**，asset **`660033035`**
+  （远端下载校验 sha512 与本地一致）
+- 提交 `4828d88`（代码） + `2233990`（发布脚本）
+- 验证：`parserSelfTest` **PASS=245 FAIL=0**；`bbModelTreeTest` **PASS=46 FAIL=0**
+
+### 改动 1：顶层组语义修正（**最重要的偏差修正**）
+
+上游 `DynamicVehicleModel.java:41-62`：
+
+```java
+for (BlockbenchOutline group : blockbenchModel.getOutlines()) {   // ← 只迭代顶层
+    final ModelPart anchor = ...;                                  // 零姿态锚点
+    nameToPart.put(group.getName(), anchor);                       // 只有顶层组进锚点表
+}
+```
+
+⇒ **只有顶层 outliner 组有 `nameToPart` 锚点**；嵌套组仅作为链上的
+旋转/位移节点，**不建立锚点**。
+
+⇒ `modelPropertiesPart.json` 的 `parts[].names` **只能匹配顶层组名**。
+
+mtr-next 此前用「祖先组名链」匹配（`isDoorByGroup`），
+会把嵌套组（如 ERIDU 的 `win_n_a1`）误认为可被 part 声明拥有。
+现改为只匹配顶层组名（`BbModelTree.groupNames` / `topLevelGroups`）。
+
+ERIDU 实测：970 元素 / **36 顶层组** / 58 个组名总数 / 13 个顶层组带 `mirror_uv` 元素。
+
+### 改动 2：新增 `DoorOverlapDetector`（复刻上游 `DynamicVehicleModel.testDoors`）
+
+| 上游 | mtr-next |
+| --- | --- |
+| 门盒 = element 的 `Box`（BB 坐标系） | `Element.upstreamBox()` |
+| 粒度 = 部件记录 × 位置实例 | `DoorBox` 一条 = 一个 part 记录的一个位置实例 |
+| `positions` / `positionsFlipped` 展开 | `DoorOverlapDetector.instances(...)`（flipped=false/true） |
+| flip 语义：X、Z 变号，Y 不变（`ModelPropertiesPart.java:647-651`） | 同上 + `x/16, y/16, z/16` 偏移 |
+| 时间片 `time = i/5`（i = 0..5） | 同（5 片） |
+| 0.1 零厚度补偿（`:244-246`） | `DoorBox.intersects(other, dx, dz)` |
+| 报 WARN | 返回字符串列表（纯数据，可离线回归） |
+
+ERIDU 实测：36 个门盒（= 顶层组数），真实几何**无重叠告警**。
+
+### 改动 3：上游 `Box` 的三轴倒序 → 归一化（**与上游等效**，2026-10-21 更正）
+
+上游 `BlockbenchElement` 构造 `Box` 时对 X/Y/Z **全部取负**：
+
+```java
+Box(-(v1.x + originX) / 16, -(v1.y + originY) / 16, -(v1.z + originZ) / 16,
+    -(v2.x + originX) / 16, -(v2.y + originY) / 16, -(v2.z + originZ) / 16)
+```
+
+由于 X/Y/Z 三个分量都取负，传入的「min 端」通常**大于**「max 端」 —— 三轴全部倒序。
+
+> **⚠️ 0.36.5 的记载在此更正（2026-10-21）**
+>
+> 0.36.5 曾断言「MC 的 `Box.intersects` 要求每轴 `min <= max`，对倒序轴恒 false
+> ⇒ **上游 `testDoors` 对 bbmodel 实际永远不会报重叠**」——**该断言是错的**。
+>
+> 取到上游二进制（`Minecraft-Mappings-fabric-1.20.1-0.0.1.jar` 里的
+> `org.mtr.mapping.holder.Box`）并反编译核实：
+>
+> - 上游 `Box(double×6)` 构造器**直接** `new class_238(x1,y1,z1,x2,y2,z2)`；
+> - MC 1.20.1 的 `AABB` 六参构造器**内部自行归一化**：
+>   `minX=Math.min(x1,x2)`、`maxX=Math.max(x1,x2)`（X/Y/Z 三轴同）；
+> - ⇒ 上游拿到的 Box **始终有序**（min ≤ max），
+>   `testDoors` **能正常检测重叠**。
+>
+> **同批核实（MC `Vec3` 字节码）**：`xRot` / `yRot` / `zRot` 都是绕原点的
+> 标准右手旋转（`xRot` 保 X、`yRot` 保 Y、`zRot` 保 Z），组合顺序 X→Y→Z，
+> 与 mtr-next `Element.rotate()` 逐项一致。
+> ⇒ `Element.upstreamBox()` 的旋转数学**已被二进制实证**，不再是推测。
+
+mtr-next 在 `Element.upstreamBox()` 里做归一化（min/max 排序），
+**结果与上游 `AABB` 归一化后的值完全一致** —— 这是**行为等效**，
+而非 0.36.5 所说的「有意偏离」。代码实现**无需改动**；
+已同步修正 `BbModelTree.upstreamBox()` 的 javadoc。
+
+> 注：`Box` / `Vector3d` 位于 `org.mtr.mapping.holder`，在
+> `Minecraft-Mappings-fabric-<mc>-0.0.1.jar` 里（**不在** `Minecraft-Mappings`
+> 那个仓库，也不在 MTR 主仓库的源码树里）。
+> 获取方式（上游主仓库 `4.0.6` 分支的 `libs/` 目录）：
+> `https://raw.githubusercontent.com/Minecraft-Transit-Railway/Minecraft-Transit-Railway/4.0.6/libs/Minecraft-Mappings-fabric-1.20.1-0.0.1.jar`
+> （注意：Maven 坐标 `org.mtr:Minecraft-Mappings-common:0.0.1` 在
+> codemc / architectury / maven central 上均 404，只能从 GitHub `libs/` 取。）
+
+### 改动 4：删除 `BbModelLoader`（旧手算路径）
+
+- `BbModelLoader`（自制六面 UV + 逐面绘制）**早已不在渲染链路**中；
+- 0.36.5 将其**删除**，`CustomResourcesReloadMixin` 改走 `BbModelTreeCache.invalidate()`；
+- 5 个自测用例全部迁移到原生树（`BbModelTree.parseForTest` + `DoorOverlapDetector`）；
+- jar 体积 103933 → **100679 B**（−3254 B）。
+
+### 本轮踩到的三个坑（环境类，非代码）
+
+1. **`C:\jdk17` 与 `F:\vibe coding工程\build.ps1` 都被误删进了回收站**，
+   回收站里只剩空目录项（`$RAPZG0M` 为 0 文件），内容不可恢复。
+   改用 `C:\Users\一只屑\.jdks\ms-17.0.19`（Microsoft OpenJDK 17.0.19 LTS），
+   并建 `C:\jdk17` junction（路径必须纯 ASCII —— `gradle.properties` 按
+   ISO-8859-1 读，中文用户名会 mojibake）。
+2. **Gradle 8.11 只能从 wrapper 缓存取**：`C:\Users\一只屑\.gradle\wrapper\dists\gradle-8.11-bin\…`。
+   已建 `F:\vibe coding工程\sfx\gradle-8.11` junction，`build.ps1` 指向它
+   （`sfx\gradle-8.10.2` **不够**，Loom 1.9.2 要求 Gradle ≥ 8.11）。
+3. **全局 `C:\gradle-home\init.d\mirror.init.gradle` 会清空 `pluginManagement.repositories`**，
+   只留阿里云四个镜像 —— 而 **fabric-loom 的 plugin marker 只在 `maven.fabricmc.net`**，
+   导致「Plugin [id: 'fabric-loom', version: '1.9.2'] was not found」。
+   已在该 init 脚本里补回 Fabric maven。
+   另：git 需配代理 `http://127.0.0.1:65532`（系统代理）才能 push。
+等渲染重构完成、整体验证通过后一并发布。
+
+---
+
+## 五i、0.36.8：门运动方向（`opening`）多车厢串味修复 + 车辆表并发安全（2026-10-21 21:50）
+
+### 改动 1（★真 bug）：`opening` 在多车厢列车上恒为「开门中」
+
+**症状**：门关闭时，关门时段的门时序窗口完全失效，门的 Z 位移走错曲线分支。
+
+**根因**：
+
+| 项 | 粒度 | 后果 |
+|---|---|---|
+| `renderCar(int carNumber, …)` | **每车厢**调一次 | — |
+| `previousDoorValue`（旧实现） | **每列车**一份（渲染器实例级） | 第 2 辆车厢读到的已是第 1 辆车厢刚写回的**同一个**门开度 |
+| 旧判定 `doorValue >= previousDoorValue` | — | 恒为 `true` ⇒ **`opening` 恒为「开门中」** |
+
+⇒ 关门时仍用 `renderFromOpeningDoorTime`/`renderUntilOpeningDoorTime` 窗口
+（关门的 `renderFromClosingDoorTime` 等**整组失效**），
+且 `getDoorAnimationZ(…, opening=true)` 走**开门曲线**而非关门曲线。
+
+**上游语义对照**：上游 `ModelPropertiesPart.java:338` 的
+`opening = vehicle.persistentVehicleData.getAdjustedDoorMultiplier(vehicle.vehicleExtraData) > 0`
+是**车辆级**的 —— 一列车只有一个 `opening` 值，所有车厢共用。
+
+**修法（两条）**：
+
+1. **优先**用 YMTR 的权威 `TrainClient.isDoorOpening()`。
+   YMTR 字节码实证（`mtr/data/TrainClient.class`）：
+   ```java
+   doorOpening = (doorValue > oldDoorValue);   // fcmpl / ifle
+   // ↑ 紧接着才调用 renderCar(...)
+   ```
+   它是 **TrainClient（车辆）级**、**每帧一次**算出的 ⇒ **与上游语义一致**。
+   （`isDoorOpening()` 在 MTR 3.2.2-hf1 / YMTR 3.6.x 的 fabric+forge **6 个目标 jar 上
+   全部存在**，签名统一为 `public final boolean isDoorOpening()`。）
+2. **回退路径**（`train == null`，仅注册模板时）用**帧标记**
+   （`System.nanoTime()/1e6`）保证 `previousDoorValue` **一帧只更新一次**，
+   同帧多车厢共用同一 `opening`。
+
+**回归测试**（`ParserSelfTest.testDoorOpeningDirection()`，**7 项**）：
+
+| 断言 | 作用 |
+|---|---|
+| 「★ 旧实现复现：第 2 辆车厢被误判为开门中」 | **直接证明 bug 真实存在**（不是假想） |
+| 「★ 新实现：同帧 3 个车厢 opening 一致且为关门中」 | 证明修复生效 |
+| 上升/下降/不变/下一帧/回升 5 项 | 锁定比较语义 |
+
+### 改动 2（并发安全）：`VehiclePackLoader.VEHICLES` 改 `ConcurrentHashMap`
+
+| 项 | 值 |
+|---|---|
+| **写** | 资源重载线程（YMTR `CustomResources.reload` → `reload()` 里 `clear()` + `put()`） |
+| **读** | 渲染线程（`getVehicle(id)` **每帧每车厢**调一次） |
+| 原类型 | `LinkedHashMap` —— **非线程安全** |
+
+`HashMap` / `LinkedHashMap` 在**并发 put/get** 下，`put` 触发 `resize` 时读线程
+可能看到**撕裂的链表结构**（next 指针与 hash 不一致）
+⇒ 可能返回错误值，甚至在损坏的桶里死循环。
+`/reload` 与「正好有列车在渲染」重叠时即可触发。
+
+⇒ 改 `java.util.concurrent.ConcurrentHashMap`。
+**插入顺序不再保证**，但两个消费方（`TrainTypeBridge` 注册车型、`FormationScreen` 列 UI）
+都只**遍历**、不依赖顺序 ⇒ **无行为变化**。
+
+> 顺带核实：本仓库其余 6 处静态 Map
+> （`BbModelTree.CACHE` / `Properties4xLoader.CACHE` /
+> `PositionDefinitions4xLoader.CACHE` / `BveTrainSound.CFG_CACHE` /
+> `FormationStore.FORMATIONS` / `HierarchyFieldFinder.CACHE`）
+> **本来就都是 `ConcurrentHashMap`** —— `VehiclePackLoader` 是**唯一的例外**，
+> 说明这是遗漏而非有意设计。
+
+### 验证
+
+- `parserSelfTest` **PASS=270 FAIL=0**（0.36.7 为 263，+7）；
+- `bbModelTreeTest` PASS=46 FAIL=0；
+- 构建 0 错误。
+
+---
+
+## 五j、0.37.0 + 0.38.0：渲染热路径清理（渲染序列逐字不变）（2026-10-22）
+
+这两版都**不改变门动画语义，也不改变绘制顺序** —— 只把「与帧无关」的工作
+从渲染期挪到加载期。
+
+### 0.37.0：位定义查表从「双层循环内」提到「循环外」
+
+旧循环结构：
+
+```
+for info in properties.parts[]:                   <- 部件记录
+  for name in info.names:                         <- 组名
+    for defName in info.positionDefinitionNames:  <- 位定义名
+      group = positions.get(defName)               <- 查表
+```
+
+`positions.get(defName)` 的结果**与 `name` 无关**（同一 `info` 的所有组名共用
+同一批位定义），却在 `name` 循环里被**重复查了 `names.length` 次**
+⇒ 查表次数 `names × defNames` ⇒ **`defNames`**。
+
+★ 渲染顺序完全不变：仍是 name-major / defName-minor。
+
+### 0.38.0：渲染计划快照（`LayerRenderCache`）
+
+0.37.0 之后仍有一处**每帧分配**：查表虽然提到了循环外，但
+
+```java
+final PositionGroup[] groups = new PositionGroup[defNames.size()];
+```
+
+**每个 NORMAL 部件每帧 new 一次**。
+
+0.38.0 新增 `LayerRenderCache`（`client/render/LayerRenderCache.java`）：
+
+| 项 | 值 |
+|---|---|
+| 缓存键 | `propertiesResource + "\|" + positionDefinitionsResource` |
+| 失效钩子 | `BbModelTreeCache.invalidate()`（资源重载时整体清空） |
+| 内容 | 只含会产出几何的部件 + 预解析好的位定义组数组 |
+| 渲染期成本 | **零查表、零分配** |
+
+**为什么是独立缓存而不是塞进 `VehicleResource.ModelLayer`**：
+车包对象（ModelLayer）可能跨资源重载存活，而 positionDefinitions 的内容跟随
+资源重载变化 ⇒ 塞进 ModelLayer 会拿到过期引用。
+
+**过滤规则与旧循环的 `continue` 逐条对应**（这是「输出不变」的依据）：
+
+| 旧循环的 continue | 新 build 的过滤 | 等价性依据 |
+|---|---|---|
+| `!"NORMAL".equals(info.type)` | 跳过该部件 | 逐字相同 |
+| `info.positionDefinitionNames.isEmpty()` | 跳过该部件 | 逐字相同 |
+| `group == null`（在 name 循环**内**） | 预过滤掉该 group | null group 对任何 name 都画不出东西 ⇒ 等价 |
+| 全部 group 都为 null | 跳过该部件 | 原循环对每个 name 都空转 ⇒ 等价 |
+
+### 等价性回归测试
+
+`testLayerRenderPlanEquivalence`（`ParserSelfTest`）把 0.37.0 的旧循环
+**原样照抄**为参照实现，与新的快照遍历对**同一输入**产出
+「绘制指令序列」（`N:<组名>:F|T:<x>,<y>,<z>`）**逐条比对**。
+
+覆盖 10 组用例：正常部件 / 非 NORMAL / 无位定义 / 位定义查不到 /
+null 与非 null 混合 / positions+positionsFlipped 并存 / 多部件多组名多定义 /
+同一组被多条记录引用（ERIDU `men2` 形态）/ 空 parts / 畸形输入，
+另含 null 安全与列表不可变断言。
+
+### 验证
+
+- `parserSelfTest` **PASS=282 FAIL=0**（0.37.0 为 278，+4）；
+- `bbModelTreeTest` PASS=46 FAIL=0；
+- 构建 0 错误。
+
+> ⚠️ 与 0.36.7 / 0.36.8 / 0.36.9 / 0.37.0 同属**无客户端图形验证**的改动 ——
+> 逻辑等价性已用回归测试锁死，但「渲染出来真的没变」仍需图形客户端肉眼确认。
+
+---
+
+## 六、关键数值常量与 MTR 4.0.5 的逐项核对（2026-10-23）
+
+用 **MTR 4.0.5 fabric 1.20.1**（`MTR-fabric-4.0.5+1.20.1.jar`，Modrinth `XKPAmI6u`）
+直接反编译核对，而不是依赖 4.0.6 的源码摘录：
+
+| 常量 | 上游 4.0.5 实测 | mtr-next | 一致？ |
+|---|---|---|---|
+| `Vehicle.DOOR_MOVE_TIME` | `public static final int = 3200` | `Properties4xLoader.DOOR_MOVE_TIME = 3200.0` | ✅ |
+| 门运动插值时长 | `PersistentVehicleData$DoorMovementInterpolation` 里 `sipush 500` | 500 ms 线性插值 | ✅ |
+
+### `Vehicle.DOOR_DELAY = 1000` —— **4.0.5 里是死常量，mtr-next 不实现是对的**
+
+`Vehicle` 有一个 `private static final int DOOR_DELAY = 1000`，`Lift` 里也有一个同名常量。
+初看像是 mtr-next 漏了一条时序，逐项验证后**否定了这个猜想**：
+
+1. 全 jar 扫描字符串 `DOOR_DELAY`：只出现在 `Vehicle.class` 与 `Lift.class`（各自是字段声明）。
+2. `javap -c` 两个类（含全部 lambda 合成方法）→ **没有一处 `getstatic DOOR_DELAY`**。
+3. ⚠️ 关键陷阱：`private static final int` 是**编译期常量**，javac 会在使用点**内联**，
+   所以「没有 `getstatic`」**不足以**证明未使用。于是又搜了内联后的字面量
+   `sipush 1000` / `ldc 1000` —— **两个类都没有**。
+4. 该 jar 里再无其他 class 引用这个名字。
+
+⇒ `DOOR_DELAY` 在 4.0.5 中是**声明了但从未使用的死常量**。
+mtr-next 不实现它不构成缺陷；同时也提醒：不要因为上游「有个常量」就假定它参与时序。
+### 附：`shouldRender` 的窗口判定与「0/0 短路」也在 4.0.5 上核对过
+
+`ModelPropertiesPart.lambda$renderNormal$25` 的字节码（offset 149 起）：
+
+```
+149: iload 16 ; ifeq 207            // if (opening) { … } else { 关门分支 }
+154-160: renderFromOpeningDoorTime == 0 ?  (lcmp; ifne 172)
+163-169:   renderUntilOpeningDoorTime == 0 ? → TRUE (ifeq 197)
+172-191: isBetween(|doorValue| * 3200.0, fromOpen, untilOpen)
+```
+
+即：
+
+```java
+render = opening
+    ? ((fromOpen == 0 && untilOpen == 0) || isBetween(|doorValue| * 3200, fromOpen, untilOpen))
+    : ((fromClose == 0 && untilClose == 0) || isBetween(|doorValue| * 3200, fromClose, untilClose));
+```
+
+与 mtr-next `Properties4xLoader.PartInfo.shouldRenderAt` 的
+`if (from == 0 && until == 0) return true;` + `min/max` 夹取**逐字等价**。
+（曾怀疑这条 `0/0 ⇒ true` 短路是 mtr-next 自己加的、可能偏离上游 —— **核实后确认上游就有**。）
+
+另外，`opening` 在字节码里来自
+`PersistentVehicleData.getAdjustedDoorMultiplier(VehicleExtraData) > 0`（offset 128-147），
+是**车辆级**的量、每帧每车厢算一次 —— 与 0.36.8 修「多车厢 opening 串味」时的结论一致。
+### 附：`smoothEnds` 的公式与边界条件也在 4.0.5 上核对过
+
+`org.mtr.mod.resource.DoorAnimationType`（4.0.5）里 `private static double smoothEnds(a, b, c, d, t)`
+的完整字节码解码：
+
+```
+ 0: if (t >= c) goto 10 else return a                    // t < startTime → a
+10: if (t <= d) goto 20 else return b                    // t > endTime   → b
+20: range = d - c
+27: delta = b - a
+32-58: delta * (1 - cos(π * (t - c) / range)) / 2 + a
+```
+
+与 mtr-next `DoorAnimation4x.smoothEnds` 的
+
+```java
+if (time < startTime) return startValue;
+if (time > endTime) return endValue;
+final float timeChange = endTime - startTime;
+final float valueChange = endValue - startValue;
+return valueChange * (1 - (float) Math.cos(Math.PI * (time - startTime) / timeChange)) / 2 + startValue;
+```
+
+**逐字等价**，包括两条边界用的是严格 `<` / `>`（不是 `<=` / `>=`）。
+
+另核对 STANDARD 的入参：mtr-next 用 `smoothEnds(0, doorMax, 0.05F, 0.5F, time)`，
+与 4.0.5 `DoorAnimationType` 里反复出现的 `0.05d` / `0.5d` 常量吻合
+（注意起点是 **0.05** 而不是 0 —— 早期文档写成 `0, 0.5` 是不准确的）。
+---
+
+## 七、总结：MTR 4.0.5 真 jar 全面核对结论（2026-10-24）
+
+本轮用 **`MTR-fabric-4.0.5+1.20.1.jar`**（Modrinth `XKPAmI6u` 直接下载，
+不再是「文档/源码摘录」或「另一个版本的 jar 推断」）完成了 mtr-next 门动画
+全链路的**实证级**核对，把此前所有「上游语义为 X（推断）」的表述全部升级成
+「上游语义为 X（实测）」。
+
+### 核对清单
+
+| # | 项目 | 4.0.5 实测 | mtr-next | 结论 |
+|---|---|---|---|---|
+| 1 | `BlockbenchElementSchema.shade` 缺省 | `iconst_1 → putfield` = **true** | `null = true` | ✅ 一致 |
+| 2 | `BlockbenchElementSchema.mirror_uv` 缺省 | `iconst_0 → putfield` = **false** | `null = false` | ✅ 一致 |
+| 3 | 镜像判据 | `!shade \|\| mirror_uv`（字节码） | `mirrorFlag()` | ✅ 一致 |
+| 4 | `Vehicle.DOOR_MOVE_TIME` | `public static final int = 3200` | `3200.0` | ✅ 一致 |
+| 5 | 门运动插值 | `DoorMovementInterpolation` 中 `sipush 500` | `500ms` | ✅ 一致 |
+| 6 | `Vehicle.DOOR_DELAY` | **死常量**（无 `getstatic`、无内联字面量） | 不实现 | ✅ 正确 |
+| 7 | `isBetween(v,a,b)` | `v >= min(a,b)-tol && v <= max(a,b)+tol`（tol=0） | min/max 夹取 | ✅ 一致 |
+| 8 | `shouldRender` 窗口判定 | `(from==0 && until==0) \|\| isBetween(...)` | 同结构 | ✅ 逐字等价 |
+| 9 | `smoothEnds` 公式 | `delta*(1-cos(π·(t-c)/range))/2 + a`（严格 `<` / `>` 边界） | 同公式 | ✅ 逐字等价 |
+| 10 | `STANDARD` 起点 | `0.05F`（非 `0`） | `0.05F` | ✅ 一致（**修正了早期文档的 0**） |
+| 11 | `hasOptimizedRendering()` | **硬编码 `return true`**（4.0.x 恒开，无开关） | 不用 OptimizedModel 路径 | ✅ 不受影响 |
+| 12 | 门动画全部曲线 | **数值对拍 580608 点，0 超容差**（`tools/door-parity/`） | `DoorAnimation4x` | ✅ 完全等价 |
+
+### 推翻的既有推断
+
+1. **「资源包可开启优化渲染 ⇒ 可能门重影」**——不成立。
+   4.0.x 的 `hasOptimizedRendering()` 恒为 `true`，没有「开不开」，
+   `modelParts` 分支在上游是**死代码**。
+2. **「`@Shadow` 可见性降级会崩」**（turbo 1.1.6 的误归因）——字节码证明是
+   静默升级，不会崩。已写入 `mtr-ante/docs/mixin-visibility-semantics.md`。
+3. **「s700 有 10 个 `mirror_uv=true` 的重复元素」**——错数。
+   实测 88 个 `mirror_uv=true`、0 个 `shade:false`、0 组重复几何，非缺陷。
+
+### 新增的对拍工具
+
+- `tools/door-parity/DoorParity.java`：加载 4.0.5 真 `DoorAnimationType`
+  与 `DoorAnimation4x` 对拍。**580608 检查点 / 0 超容差 /
+  maxAbsDiff=7.63e-7 px**（float/double cast 噪音）。
+  以后改动 `DoorAnimation4x` 必跑一次，防回归。
+
+### 遗留开放问题（不隐瞒）
+
+- 「只有 bbmodel、没有 .obj 的车包在 4.0.x 里车门是否仍渲染」**仍未闭合**
+  （已确认 `PartDetails.optimizedModelDoor` 由外部供给/惰性供给，
+  追查在 `writeCache` 的两个 lambda 处主动停止——该答案不影响 mtr-next 行为）。
+- 客户端图形侧验证（渲染效果、三 mod 共存、turbo/ante 运行时）仍是
+  headless 环境的硬限制，不属于代码层可推进项。
