@@ -1,0 +1,23 @@
+All Rights Reserved
+
+Copyright (c) 2026 szkele1145
+
+本作品（"MTR Next" / "MTR Next Test"）保留所有权利。未经版权所有者事先书面许可，
+不得复制、分发、发布、再分发、修改、创作衍生作品或以任何形式使用本作品，
+包括但不限于源代码、二进制形式、资源包、车包、纹理、模型、音频及其他素材。
+
+第三方组件与上游致谢：
+
+本项目使用了以下第三方作品，其著作权归各自作者所有，并按各自的许可条款使用：
+
+- Minecraft Transit Railway (MTR) 4.x —— 车包格式与渲染算法参考
+  Copyright (c) Minecraft Transit Railway contributors
+  以 MIT 许可发布
+- YMTR 3.x (Minecraft Transit Railway 3.x 分支) —— 宿主环境与 API
+  以 MIT 许可发布
+- Minecraft —— Mojang Studios
+  以其专有许可条款使用
+- Fabric Loader / Fabric API —— FabricMC
+  以 Apache-2.0 / MIT 许可发布
+
+本作品受版权法及国际著作权条约保护。

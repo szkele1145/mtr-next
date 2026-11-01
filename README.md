@@ -4,7 +4,7 @@
 
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1-green)](https://minecraft.net)
 [![Fabric](https://img.shields.io/badge/Loader-Fabric-blue)](https://fabricmc.net)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![License](https://img.shields.io/badge/License-ARR-red)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Work%20in%20Progress-orange)](#项目状态)
 
 ---
@@ -104,4 +104,9 @@ gradlew.bat build
 
 ## 许可
 
-MIT
+**All Rights Reserved（保留所有权利）**
+
+未经版权所有者书面许可，不得复制、分发、修改或以任何形式使用。
+完整条款见 [LICENSE](LICENSE)。
+
+上游致谢与第三方许可见 LICENSE 文件。
