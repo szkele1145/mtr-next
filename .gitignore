@@ -1,11 +1,12 @@
-.gradle/
 build/
-run*/
-out/
-.idea/
-*.iml
-vibe coding工程/
+run/
+.gradle/
 logs/
-
-# 构建日志
-build-*.log
+*.log
+*.jar.tmp
+!gradle/wrapper/gradle-wrapper.jar
+publish-*.js
+upload-modrinth*.js
+*.token
+.mrtoken
+.ghtoken

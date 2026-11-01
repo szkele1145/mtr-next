@@ -67,6 +67,9 @@ public final class VehiclePackLoader {
 	/** 资源重载时调用：扫描并解析全部 4.0 格式车包 */
 	public static void reload(ResourceManager manager) {
 		VEHICLES.clear();
+		// [0.59.0] 车型解析缓存同步失效：车包增删后 id 集合会变，
+		// 留着旧命中项会让已删除的车型继续被当成 4.0 车型解析。
+		VehicleLookup.clearCache();
 		final List<Resource> entries;
 		try {
 			entries = new ArrayList<>(manager.getResourceStack(PACK_ENTRY));

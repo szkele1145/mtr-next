@@ -67,10 +67,67 @@ public final class TrainTypeBridge {
 			if (count > 0) {
 				MtrNext.LOGGER.info("Registered {} 4.0-format train types into YMTR registry", count);
 			}
+			// ★ [0.41.5] 已按用户要求取消「覆盖原版车型」。
+			//
+			//   0.41.1 曾用 4.0 车覆盖全部 97 个 3.x 默认 TRAIN 车型，
+			//   效果是原版配车界面里所有车都变成车包车 —— 用户明确不要。
+			//
+			//   ⇒ 现在只在 TrainClientRegistry 里「新增」4.0 车型，
+			//     原版车型保持原样。4.0 车只在 mtr-next 自己的配置页里可选。
+			// overrideNativeTrainTypes();   // 已禁用
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.error("Failed to register 4.0 train types", t);
 		}
 		return count;
+	}
+
+	/**
+	 * 用 4.0 车包里的第一辆车覆盖 YMTR 现有的全部 TRAIN 车型。
+	 *
+	 * <p>这样玩家在原版车辆管理里选任何默认车型，渲染出来的都是 4.0 车包的车。
+	 */
+	private static void overrideNativeTrainTypes() {
+		try {
+			final java.util.Map<String, VehicleResource> vehicles = VehiclePackLoader.getVehicles();
+			if (vehicles.isEmpty()) {
+				return;
+			}
+			final VehicleResource rep = vehicles.values().iterator().next();
+			if (rep == null) {
+				return;
+			}
+			// 先收集现有车型 id（避免在 forEach 里改同一个 map）
+			final java.util.List<String> nativeIds = new java.util.ArrayList<>();
+			TrainClientRegistry.forEach(mtr.data.TransportMode.TRAIN, (id, props) -> nativeIds.add(id));
+			if (nativeIds.isEmpty()) {
+				MtrNext.LOGGER.info("No native TRAIN types to override");
+				return;
+			}
+			int overridden = 0;
+			for (final String id : nativeIds) {
+				final mtr.client.TrainProperties props = new mtr.client.TrainProperties(
+						id,   // ← 保留原 id，使 baseTrainType 仍能查到
+						net.minecraft.network.chat.Component.literal(
+								rep.name == null || rep.name.isEmpty() ? rep.id : rep.name),
+						rep.id,
+						"",
+						rep.color,
+						(float) rep.legacyRiderOffset,
+						0.0F,
+						(float) rep.bogie1Position,
+						false,
+						rep.hasGangway1 || rep.hasGangway2,
+						new mtrnext.client.render.BbModelTrainRenderer(rep.id),
+						rep.bveSoundBaseResource.isEmpty()
+								? new mtrnext.sound.BlankTrainSound()
+								: mtrnext.sound.BveTrainSound.create(rep.bveSoundBaseResource));
+				TrainClientRegistry.register(id, props);
+				overridden++;
+			}
+			MtrNext.LOGGER.info("Overrode {} native TRAIN types with 4.0 vehicle '{}'", overridden, rep.id);
+		} catch (final Throwable t) {
+			MtrNext.LOGGER.error("Failed to override native train types", t);
+		}
 	}
 
 	private static String familyOf(String id) {

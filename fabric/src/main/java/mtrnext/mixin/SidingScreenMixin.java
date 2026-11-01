@@ -6,6 +6,7 @@ import mtrnext.screen.FormationScreen;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -34,6 +35,12 @@ public abstract class SidingScreenMixin extends Screen {
 
 	protected SidingScreenMixin(net.minecraft.network.chat.Component title) {
 		super(title);
+	}
+
+	/** 宿主私有方法：收起「选择车型」列表。mixin 可直接 shadow 调用。 */
+	@Shadow
+	private void setIsSelectingTrain(boolean isSelectingTrain) {
+		throw new AssertionError("shadow");
 	}
 
 	@Inject(method = "method_25426", at = @At("RETURN"))
@@ -84,5 +91,99 @@ public abstract class SidingScreenMixin extends Screen {
 			MtrNext.LOGGER.debug("host siding id lookup failed", t);
 		}
 		return 0;
+	}
+
+	// ==================================================================
+	// [0.59.0] 「选了 4.0 车却没反应」——配车界面的静默丢弃
+	// ==================================================================
+
+	/**
+	 * YMTR 原逻辑（CFR 反编译 {@code mtr/screen/SidingScreen.java:299-305}）：
+	 * <pre>
+	 *   private void onAdd(NameColorDataBase data, int index) {
+	 *       if (data instanceof TrainForList
+	 *               &amp;&amp; savedRailBase.isValidVehicle(TrainType.getSpacing(properties.baseTrainType))) {
+	 *           savedRailBase.setTrainIdAndBaseType(...);
+	 *           this.setIsSelectingTrain(false);
+	 *       }
+	 *       // ★ else 什么都不做：点击被静默丢弃，界面不关、车型不变、无任何提示
+	 *   }
+	 * </pre>
+	 *
+	 * <p><b>为什么这是「强制兼容」的另一半</b>：4.0 车的车长（12 格 ⇒ spacing 13）
+	 * 比短侧线大时，{@code isValidVehicle} 为 {@code false}，玩家在这个界面上
+	 * <b>永远选不上 4.0 车型</b>——点一下没反应，只能回头去点原版车。
+	 * 从玩家视角看，就是「它不让我用 4.0 车，只能换成原版」。
+	 *
+	 * <p>本注入把这条静默丢弃改成：<b>4.0 车型一律接受</b>（放不下由 MTR 按
+	 * {@code floor(railLength / spacing)} 自己截断车厢数，而不是替玩家换车型）。
+	 * 3.x 车型<b>行为逐字不变</b>（继续走上游判断）。
+	 */
+	@Inject(method = "onAdd", at = @At("HEAD"), cancellable = true, remap = false)
+	private void mtrnext$accept4xSelection(mtr.data.NameColorDataBase data, int index, CallbackInfo ci) {
+		try {
+			final Object host = mtrnext$hostSiding();
+			if (!(host instanceof mtr.data.Siding siding)) {
+				return;
+			}
+			final mtr.client.TrainProperties props = mtrnext$trainPropertiesOf(data);
+			if (props == null || props.baseTrainType == null) {
+				return;
+			}
+			// 只接管 4.0 车型；3.x 车型原样交回上游
+			if (mtrnext.pack.VehicleLookup.find(props.baseTrainType) == null) {
+				return;
+			}
+			final String trainId = mtrnext$stringFieldOf(data, "trainId");
+			final int spacing = mtr.data.TrainType.getSpacing(props.baseTrainType);
+			final boolean fits = siding.isValidVehicle(spacing);
+			MtrNext.LOGGER.info("[compat-audit] 配车界面选中 4.0 车型 trainId='{}' base='{}' spacing={} "
+							+ "railLength={} 放得下={}",
+					trainId, props.baseTrainType, spacing, siding.railLength, fits);
+			if (fits) {
+				MtrNext.LOGGER.info("[compat-audit] 放得下 → 交回上游原逻辑（正常写入并收起列表）");
+				return;
+			}
+			// ★ 放不下也不丢弃：按玩家选择写入，绝不替他换成内置车
+			siding.setTrainIdAndBaseType(trainId, props.baseTrainType,
+					packet -> mtr.packet.PacketTrainDataGuiClient.sendUpdate(
+							mtr.packet.IPacket.PACKET_UPDATE_SIDING, packet));
+			this.setIsSelectingTrain(false);
+			ci.cancel();
+			MtrNext.LOGGER.warn("[compat-audit] 侧线放不下（spacing={} > {}），仍按玩家选择写入 "
+							+ "trainId='{}' base='{}'（上游原本会静默丢弃这次点击）",
+					spacing, Math.max(2.0F, siding.railLength), siding.getTrainId(), siding.getBaseTrainType());
+		} catch (final Throwable t) {
+			MtrNext.LOGGER.debug("onAdd 4.0 选择接管失败（交回上游）", t);
+		}
+	}
+
+	/** {@code SidingScreen.TrainForList.trainProperties}（私有内部类字段，反射取） */
+	private static mtr.client.TrainProperties mtrnext$trainPropertiesOf(Object data) {
+		if (data == null) {
+			return null;
+		}
+		try {
+			final java.lang.reflect.Field f = data.getClass().getDeclaredField("trainProperties");
+			f.setAccessible(true);
+			final Object v = f.get(data);
+			return v instanceof mtr.client.TrainProperties p ? p : null;
+		} catch (final Throwable t) {
+			return null;
+		}
+	}
+
+	private static String mtrnext$stringFieldOf(Object data, String name) {
+		if (data == null) {
+			return null;
+		}
+		try {
+			final java.lang.reflect.Field f = data.getClass().getDeclaredField(name);
+			f.setAccessible(true);
+			final Object v = f.get(data);
+			return v instanceof String s ? s : null;
+		} catch (final Throwable t) {
+			return null;
+		}
 	}
 }

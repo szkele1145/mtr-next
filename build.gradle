@@ -84,6 +84,13 @@ sourceSets {
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = "UTF-8"
 	options.release = 17
+	// ★ [0.38.4] 让 javac 的诊断真正显示出来。
+	// 此前 gradle 用「in-process compilation」且把 DiagnosticListener 的输出吞掉，
+	// 编译失败只剩 "> Task :compileJava FAILED" 一行 —— 排查只能靠猜。
+	// forkOptions + -Xdiags:verbose 让 javac 独立进程输出完整诊断。
+	options.fork = true
+	options.forkOptions.memoryMaximumSize = '2g'
+	options.compilerArgs += ['-Xdiags:verbose', '-Xmaxerrs', '50']
 }
 
 // [0.31] 解析层离线自测：不依赖 JUnit / 不启动客户端，
@@ -108,4 +115,20 @@ tasks.register('bbModelTreeTest', JavaExec) {
 	// 两个 JavaExec 共享 runtimeClasspath；并发启动时可能互相踩到对方的
 	// classloader（实测偶发 NoClassDefFoundError）。串行化以保证稳定。
 	mustRunAfter tasks.named('parserSelfTest')
+}
+
+tasks.register('printCp') {
+	doLast { println sourceSets.main.compileClasspath.asPath }
+}
+
+// [0.62.0] 方法 A 对拍：4.0 原文公式 vs mtr-next BbModelTree，逐元素比 cube 世界位置。
+tasks.register('bbPivotCrossCheck', JavaExec) {
+	group = 'verification'
+	description = '4.0 逐字重算 vs BbModelTree 的 pivot 对拍（离线）'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'mtrnext.UpstreamCrossCheck'
+	if (project.hasProperty('bbmodel')) {
+		args project.property('bbmodel')
+	}
+	mustRunAfter tasks.named('bbModelTreeTest')
 }

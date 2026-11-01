@@ -4,13 +4,14 @@
 	"package": "mtrnext.mixin",
 	"compatibilityLevel": "JAVA_17",
 	"refmap": "mtr-next.refmap.json",
-	"mixins": [
-		"ItemBlockClickingBaseMixin"
-	],
+	
+	"mixins": [],
 	"client": [
 		"CustomResourcesReloadMixin",
 		"RenderTrainsPreviewMixin",
-		"SidingScreenMixin"
+		"RenderTrainsRailInvoker",
+		"SidingScreenMixin",
+		"TrainClientRegistryMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

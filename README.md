@@ -1,47 +1,106 @@
-# MTR Next — 把 MTR 4.x 特性带回 YMTR 3.x
+# MTR Next 4to3 Car
 
-> 独立 mixin 附属（**不是** MTR/YMTR 的分支）。目标 YMTR 3.6.x / MTR 3.2.x（MC 1.20.1 Fabric）。
-> 定位：4.x 特性的**回移层**——轨道预览 + 4.0 格式车包的全链路支持。
+**在 YMTR 3.x（MTR 3.6.4.2 分支）里加载并渲染 MTR 4.0 格式的车包。**
 
-## 功能矩阵（0.26.0）
+[![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1-green)](https://minecraft.net)
+[![Fabric](https://img.shields.io/badge/Loader-Fabric-blue)](https://fabricmc.net)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Status](https://img.shields.io/badge/Status-Work%20in%20Progress-orange)](#项目状态)
 
-| 功能 | 状态 | 说明 |
-|---|---|---|
-| **轨道预览** | ✅ 曲线精确 | 与正式轨道同源贝塞尔（64 段采样）——**预览=实际** |
-| **4.0 车包解析** | ✅ 三级 schema | vehicles / properties / definition 全字段 |
-| **自定义编组** | ✅ 完整编辑器 | 头连头翻转、Flip All、Clear All、连接面校验反馈、选中车详情条、双列表分页、车色图标 |
-| **编组→发车** | ✅ 桥接闭环 | 保存即写入 Siding 车辆配置 |
-| **车辆渲染** | ✅ bbmodel 桥 | BlockBench → MC ModelPart，YMTR 原生渲染管线 |
-| **门动画** | ✅ 平滑插值 | `door` 命名部件识别，开 0.5/s 关 0.8/s 渐进 |
-| **连接面** | ✅ 三向贴图 | gangway（贯通道）/barrier（端墙）侧/顶/底程序化渲染 |
-| **BVE 声音** | ✅ **sound.cfg 全键 12 事件** | Motor（调速）/Brake（调速分层）/Run/Flange/Joint（节点概率）/缓解排气/发车排气（起动沿）/紧急制动（急减速沿）/门开/门关（真实关门沿）/常驻底噪/闸瓦 |
-| **实时速度** | ✅ | Train.speed 反射（缓存）驱动全部调速表与边沿检测 |
+---
 
-**双版本车包并存**：4.0 格式（vehicles 段特征）由 MTR Next 接管；
-**3.2 格式零侵入**——YMTR 原样处理。无 4.0 车包时界面零变化。
-编组持久化 sidecar NBT——卸载本 mod 世界照常打开。
+## 这是什么
 
-## 已验证
+MTR 4.0 换了全新的车包格式（`.bbmodel` + `properties_*.json` + `definition_*.json` + `mtr_custom_resources.json`），而 YMTR 还在用 3.x 的旧格式，导致 4.0 车包**完全无法使用**。
 
-- 38 轮真实服务器冒烟 + 三方实测（YMTR + MTR Turbo + MTR Next 零冲突）
-- 格式实证：ERIDU-DG1000A 参考包全解构（12 个声音事件逐一对照）
-- 全部挂钩 javap 字节码核验；**四轮审查驱动的质量修复**（反射去重 / 门查找早终止 / config 单取 / speed 单取）——播放热路径全清
-- 限制记录→解除限制的完整闭环（Door Close：0.19 记录→0.20 解除）
+这个模组补上了这层桥：让 3.x 能读 4.0 车包、能把 4.0 车型注册进配车界面、能按编组逐节渲染不同的车。
 
-## 使用
+> 轨道预览功能已拆为独立模组：[**MTR Next Rail**](https://github.com/szkele1145/mtr-next-rail)
 
-1. 装 YMTR 3.6.x（或 MTR 3.2.x）+ 本 mod
-2. 放入 4.0 格式车包（含 `mtr_custom_resources.json` vehicles 段）
-3. 车厂侧线"编组 [MTR-Next]"按钮 → 可视化编组
-4. 手持轨道节点选点 → 精确曲线预览
-5. 保存 → 该侧线按你的编组发车；4.0 车体/连接面/12 事件声音全部呈现
+## 项目状态
 
-## 构建与开发
+**开发中（Work in Progress）** —— 请先看清楚再下载。
 
+| 功能 | 状态 |
+|---|---|
+| 4.0 车包解析（bbmodel / properties / definition / 贴图 / 音效） | 可用 |
+| 4.0 车型注册进 YMTR 配车界面 | 可用 |
+| 自定义编组（加车 / 删车 / 翻转 / 保存 / 持久化） | 可用 |
+| 逐节车型（头车 / 中间车 / 尾车各不同） | 可用 |
+| **车体部件渲染位置** | **有错位问题**（扶手/挡板漂移、正反贴图重叠），正在修 |
+| BVE 声景（`sound.cfg` 全套按键） | 可用 |
+
+**如果你只是想用轨道预览**，请装 [MTR Next Rail](https://github.com/szkele1145/mtr-next-rail)，它是稳定版。
+
+## 功能
+
+### 4.0 车包加载
+
+把 4.0 格式的车包（`.zip`）放进 `resourcepacks/` 并在游戏里启用即可。模组会自动：
+
+- 解析 `mtr_custom_resources.json` 清单
+- 读取每个车型的 `models` / `bogie1Models` / `bogie2Models`
+- 解析 `.bbmodel` 的组层级、元素几何、贴图 UV
+- 把车型注册进 YMTR 的 `TrainClientRegistry`，让它在配车界面可选
+
+### 自定义编组
+
+在原版配车界面点「编组」按钮，可以：
+
+- 从可用车辆列表里挑选，逐节添加到编组
+- 每节单独设置方向（正接 / 反接）
+- 删除某一节、清空整个编组
+- 保存后自动同步到服务端
+
+编组会持久化到 `<存档>/mtr-next-4to3-car-formations.nbt`，重进世界、重启游戏都还在。
+
+### 逐节车型
+
+编组里可以是不同的车（头车 `M_F`、中间车 `M_T`、尾车 `M_B`），渲染时按编组**对应那一节**的车型画，不会整列都用同一种。
+
+### BVE 声景
+
+支持 4.0 车包的 `sound.cfg`，包括电机、刹车、道岔、雨刷等全部按键。
+
+## 兼容性
+
+| 项目 | 版本 |
+|---|---|
+| Minecraft | 1.20.1 |
+| Fabric Loader | >= 0.15.6 |
+| Fabric API | 任意 1.20.1 版本 |
+| **MTR** | **YMTR（MTR 3.6.4.2 分支）必需** |
+| Java | 17+ |
+
+**必需依赖**：本模组不能独立运行，必须装 MTR（YMTR 版）。不兼容原版 MTR 3.2.x。
+
+## 安装
+
+1. 安装 Fabric Loader 与 Fabric API
+2. 安装 MTR（YMTR 3.6.4.2 分支）
+3. 把 `mtr-next-4to3-car-*.jar` 放进 `mods/`
+4. 启动游戏，把 4.0 车包放进 `resourcepacks/` 并启用
+
+## 从源码构建
+
+```bash
+# Windows（JDK 17 必需）
+set GRADLE_USER_HOME=C:\gradle-home
+gradlew.bat build
+
+# 产物：build/libs/mtr-next-4to3-car-<version>-1.20.1-fabric.jar
 ```
-gradlew build     # 产物 build/libs/mtr-next-<ver>-1.20.1-fabric.jar
-gradlew runServer # 冒烟
-```
+
+## 已知问题
+
+- **车体部件错位**：车内扶手、挡板可能漂移到车身之外，正贴图与反贴图会重叠。根因还在定位。
+- **复杂模型更明显**：元素多、层级深的车包（如 2418 元素的 17 格长车）错位更严重，极端情况下整车不可见。
+- **刷子失效**：部分情况下轨道节点工具无法正常使用，正在排查。
+
+## 致谢
+
+- [MTR](https://github.com/jonafanho/Minecraft-Transit-Railway) —— 车包格式与渲染算法
+- [YMTR](https://github.com/) 3.6.4.2 分支 —— 提供 3.x 宿主环境
 
 ## 许可
 

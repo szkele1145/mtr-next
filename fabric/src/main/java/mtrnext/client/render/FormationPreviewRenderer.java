@@ -36,24 +36,42 @@ public final class FormationPreviewRenderer {
 				return;
 			}
 
-			int carIndex = 0;
-			final int total = formation.cars.size();
+			// ★★★ [0.50.0] 预览排布：按每节车的**实际车长**依次排开 ★★★
+			//
+			//   0.49 及以前写死 {@code translate((i - (n-1)/2) * 1.5, 0, 0)} ——
+			//   间距 1.5 格，而 ERIDU 单节车长 12 格 ⇒ 编组里所有车**完全叠在一起**
+			//   （真机表现：编组屏里只看得到一节车，多个车的门/扶手/端墙互相穿插，
+			//    看起来像「部件漂到天上 / XYZ 全乱」）。
+			//   这正是用户说的「自定义编组没有用」在预览里的直接观感。
+			//
+			//   现改为：总长 = Σ(车长 + 0.5 车钩间隙)，逐节累加游标居中摆放。
+			final double gap = 0.5;
+			double totalLength = 0.0;
+			for (final Formation.Car car : formation.cars) {
+				final VehicleResource res = VehiclePackLoader.getVehicle(car.vehicleId);
+				totalLength += (res == null || res.length <= 0 ? 12.0 : res.length) + gap;
+			}
+			double cursor = -totalLength / 2.0;
+
 			for (final Formation.Car car : formation.cars) {
 				final VehicleResource res = VehiclePackLoader.getVehicle(car.vehicleId);
 				if (res == null || res.models.isEmpty()) {
-					carIndex++;
+					cursor += 12.0 + gap;
 					continue;
 				}
+				final double length = (res.length <= 0 ? 12.0 : res.length) + gap;
 
 				poseStack.pushPose();
-				poseStack.translate((carIndex - (total - 1) * 0.5) * 1.5, 0, 0);
+				// 车长沿 Z 轴（模型 z 范围 ±6 格），所以沿 Z 首尾相接排开；
+				// 再加 0.5 格抬起，避免车底与屏幕平面共面导致 z-fighting。
+				poseStack.translate(0, 0, cursor + length / 2.0);
 				if (!car.forward) {
 					poseStack.mulPose(com.mojang.math.Axis.YP.rotationDegrees(180));
 				}
 				renderCar(poseStack, buffers, res);
 				poseStack.popPose();
 
-				carIndex++;
+				cursor += length;
 			}
 		} catch (final Throwable t) {
 			MtrNext.LOGGER.debug("formation preview render failed", t);
@@ -76,8 +94,9 @@ public final class FormationPreviewRenderer {
 					net.minecraft.client.renderer.RenderType.entityCutoutNoCull(
 							BbModelTreeCache.texture(layer.textureLocation)));
 
-			final Properties4xLoader.GangwayProperties props =
-					Properties4xLoader.load(manager, layer.propertiesResource);
+			// [0.54.0] 删掉未使用的 GangwayProperties 加载：
+			//   预览只画车体几何，不画贯通道/端墙（那是 FormationPreviewRenderer
+			//   之外的世界渲染逻辑），此前每层每帧白做一次 properties 查找。
 			// [0.38.0] 渲染计划快照（过滤 + 位定义查表在加载期完成；渲染输出不变）
 			final LayerRenderCache plan = LayerRenderCache.load(
 					manager, layer.propertiesResource, layer.positionDefinitionsResource);

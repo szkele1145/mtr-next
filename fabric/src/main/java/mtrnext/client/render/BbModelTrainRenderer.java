@@ -32,8 +32,62 @@ import java.util.Map;
  *   <li>门开度取 host 的 {@code Train.getDoorValue()}，与上游
  *       {@code persistentVehicleData.getDoorValue()} 同源</li>
  * </ul>
+ * <p>
+ * <b>[0.45.0]</b> 世界渲染的变换链改为「照抄 YMTR 原生渲染器」：
+ * {@code matrices} + {@code applyAverageTransform} + {@code translate(x,y,z)}
+ * + {@code rotateY(π + yaw)} + {@code rotateX(π + pitch)}，2 push / 2 pop。
+ * 旧的自建 {@code PoseStack} 会丢掉矩阵里已有的相机视图旋转 ⇒ 朝向错。
+ * 详见 {@link #renderCar}。
  */
 public final class BbModelTrainRenderer extends TrainRendererBase {
+
+	/** [0.39.6] 渲染异常告警限流（避免每帧刷屏） */
+	private static long MTRNEXT$LAST_RENDER_WARN = 0L;
+	private static void warnThrottled(String what, Throwable t) {
+		final long now = System.currentTimeMillis();
+		if (now - MTRNEXT$LAST_RENDER_WARN > 5000L) {
+			MTRNEXT$LAST_RENDER_WARN = now;
+			MtrNext.LOGGER.warn("[bbmodel] {} failed — 该车包可能有畸形数据（顶点/UV/properties）", what, t);
+		}
+	}
+
+	/** [0.40.2] 诊断限流：排查「车为什么不渲染」 */
+	private static long MTRNEXT$LAST_DIAG = 0L;
+	/** [0.44.0] 坐标诊断限流 */
+	private static long MTRNEXT$COORD_LOG = 0L;
+	/** [0.50.0] 车体帧平移校正日志（只打一次） */
+	private static long MTRNEXT$XF_LOG = 0L;
+	/** [0.57.0] 已打印过「发车车型」的 Train 实例 id（每辆车只打一次） */
+	private static final java.util.Set<Long> MTRNEXT$TRAIN_LOG = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	/**
+	 * [0.45.0] 渲染用的 PoseStack —— <b>直接就是框架的静态 {@code matrices}</b>。
+	 *
+	 * <p>0.42.0–0.44.0 曾自建 {@code new PoseStack()}（从单位矩阵起步），
+	 * 想「与配置界面同构」，那是个方向性错误：
+	 * <ul>
+	 *   <li>{@code matrices} 在本渲染阶段<b>已经含相机视图旋转</b>
+	 *       （{@code RenderTrains.render} 里先 {@code translate(-cameraPosition)}，
+	 *       再 {@code TrainRendererBase.setupStaticInfo(matrices, ...)} 把它存进静态字段）；</li>
+	 *   <li>自建栈从单位矩阵开始 ⇒ 丢掉视图旋转 ⇒ 模型朝向不随视角变，
+	 *       真机表现为「车头/车身朝向乱、一坨」；</li>
+	 *   <li>世界渲染的 x/y/z 是<b>世界坐标</b>（见 {@link #renderCar} 注释的证据链），
+	 *       自建栈里再减一次相机位置 ⇒ 位置整体下沉/错位。</li>
+	 * </ul>
+	 * ⇒ 0.45.0 起严格照抄 YMTR 原生渲染器（反编译 {@code mtr/render/JonModelTrainRenderer.java:104-154}）
+	 * 的变换链，一条都不省。
+	 */
+	private static com.mojang.blaze3d.vertex.PoseStack stack() {
+		return matrices;
+	}
+
+	private static void diag(String msg) {
+		final long now = System.currentTimeMillis();
+		if (now - MTRNEXT$LAST_DIAG > 4000L) {
+			MTRNEXT$LAST_DIAG = now;
+			MtrNext.LOGGER.info("[bbmodel] {}", msg);
+		}
+	}
 
 	private final String trainId;
 	/** 本渲染器对应的列车实例（createTrainInstance 注入；门开度来源） */
@@ -100,10 +154,43 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 	public void renderCar(int carNumber, double x, double y, double z, float rotationY, float rotationZ,
 			boolean doorLeftOpen, boolean doorRightOpen) {
 		try {
-			final VehicleResource res = VehiclePackLoader.getVehicle(trainId);
-			if (res == null || res.models.isEmpty()) {
+			// ★★★ [0.50.0] 按「编组」渲染，而不是按 MTR 算出来的车厢数 ★★★
+			//
+			//   用户反馈「自定义编组没有用」的根因（存档 + 日志实证）：
+			//     · mtr-next-formations.nbt 里这条编组只有 1 节：ERIDU-DG1000A(M_T)
+			//     · 世界里却渲染了 2 节（car=0 / car=1）
+			//   因为 MTR 的 {@code Train.trainCars} 是
+			//   {@code min(maxLength, floor(railLength / spacing))} 算出来的
+			//   （{@code Train.java:342}，网络包构造器里<b>重算</b>，改 Siding 字段无效），
+			//   编组节数根本不参与发车 —— 编组配 1 节，MTR 发 2 节，两节都用同一车型。
+			//
+			//   修法（纯渲染层，不动 MTR 数据）：
+			//     ① 超出编组节数的车厢 <b>不渲染</b>（配几节就显示几节）；
+			//     ② 每节按编组里<b>对应那一节</b>的车型渲染（头车/中间车/尾车各不相同）。
+			//   后者同时解决「两个车头」：编组里第 0 节是 M_F 就只画一个车头。
+			final mtrnext.formation.Formation formation = mtrnext$formation();
+			// ★★★ [0.56.0] 删除「按编组节数裁剪」★★★
+			//
+			//   0.50.0 在这里 return 掉 carNumber >= formation.cars.size() 的车厢，
+			//   想「配几节就显示几节」。但 MTR 的车厢位置是按
+			//   trainCars（= floor(railLength / spacing)，见 Train.java 包构造器）
+			//   一格格排开的：被跳过的那节**位置还在** ⇒ 真机表现为
+			//   「车厢连接处消失、中间隔了非常大一块」。
+			//
+			//   正确做法分两层：
+			//     ① 数据层（FormationSidingBridge.baseTypeForCars）反算 baseTrainType，
+			//        让 MTR 算出的 trainCars 就等于编组节数；
+			//     ② 渲染层绝不留空洞 —— 多出来的节按 trainId（众数变体）兜底渲染。
+			final VehicleResource res = mtrnext$vehicleFor(carNumber, formation); // ② 逐节车型
+			if (res == null) {
+				diag("renderCar: getVehicle(" + trainId + ") == null");
 				return;
 			}
+			if (res.models.isEmpty()) {
+				diag("renderCar: vehicle " + trainId + " 的 models 为空");
+				return;
+			}
+			diag("renderCar: " + trainId + " 有 " + res.models.size() + " 个 model 层");
 
 			final boolean anyDoorOpen = doorLeftOpen || doorRightOpen;
 			final float doorValue = doorValue(anyDoorOpen);
@@ -112,38 +199,216 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			// 拿不到时才回退到自维护的门开度变化方向。
 			final boolean opening = doorOpening(doorValue);
 
-			matrices.pushPose();
-			matrices.translate(x, y, z);
-			// 上游 host 契约：先 Y(π + yaw)，再 X(π + pitch)。
-			// renderCar 的 rotationZ 实为 pitch（YMTR 用它判断升降坡，见
-			// JonModelTrainRenderer.renderCar 的 hasPitchAscending/Descending），不是滚转。
-			matrices.mulPose(com.mojang.math.Axis.YP.rotation((float) (Math.PI + rotationY)));
-			matrices.mulPose(com.mojang.math.Axis.XP.rotation((float) (Math.PI + rotationZ)));
-
-			final ResourceManager manager = Minecraft.getInstance().getResourceManager();
-			for (final VehicleResource.ModelLayer layer : res.models) {
-				renderLayer(manager, layer, doorValue, opening);
+			// ★★★ [0.45.0] 变换链整体对齐 YMTR 原生渲染器（唯一正确写法）★★★
+			//
+			//   权威依据（CFR 反编译 libs/ymtr-fabric-1.20.1.jar，
+			//   C:\tmp\ymtr_dec\mtr\render\JonModelTrainRenderer.java:104-154）：
+			//   <pre>
+			//     BlockPos posAverage = applyAverageTransform(this.train.getViewOffset(), x, y, z);
+			//     if (posAverage == null) return;        // 超距分支：这里**没有** pushPose
+			//     matrices.pushPose();                   // ① 本渲染器自己的帧
+			//     matrices.translate(x, y, z);
+			//     UtilitiesClient.rotateY(matrices, (float) (Math.PI + yaw));
+			//     UtilitiesClient.rotateX(matrices, (float) (Math.PI + pitch));
+			//     ... 画模型 ...
+			//     matrices.popPose();                    // ① 的收尾
+			//   </pre>
+			//   而 {@code applyAverageTransform}（TrainRendererBase，反编译同文件）内部：
+			//   <pre>
+			//     posAverage = newBlockPos(x + cameraEntity.getX(), ...);   // 仅用于距离剔除
+			//     if (shouldNotRender(...)) return null;                    // 不 push
+			//     matrices.pushPose();                                      // ② 相机帧
+			//     if (viewOffset != null) {
+			//         matrices.translate(cam.x, cam.y, cam.z);              // ← 与 RenderTrains 的
+			//         rotateYDegrees(matrices, yawDiff + (flipActive ? 180 : 0));   //   translate(-cam) 抵消
+			//         matrices.translate(-viewOffset.x, -viewOffset.y, -viewOffset.z);
+			//     }
+			//   </pre>
+			//
+			//   <b>坐标语义（实证）</b>：x/y/z 是<b>世界坐标</b>，不是相机相对——
+			//   {@code Train.simulateTrain} 用 {@code Rail.getPosition(...)} 取世界坐标
+			//   （{@code Train.java:896}），{@code TrainClient.simulateCar} 只减去
+			//   {@code vehicleRidingClient.renderPlayerAndGetOffset()}（骑乘者偏移，通常为 0）。
+			//   相机偏移由 RenderTrains（{@code translate(-cameraPosition)}）与
+			//   applyAverageTransform（{@code translate(+cameraPosition)}）**两边抵消**。
+			//
+			//   ⇒ 0.42.0 的自建 PoseStack 之所以错，不是因为多减了相机，
+			//     而是因为它<b>从单位矩阵起步，丢掉矩阵里已有的相机视图旋转</b>
+			//     （真机症状：车身朝向不随视角、看似「一坨」）。
+			//     π 也必须保留：模型空间是 Y 向下（见 BbModelTree 的 pivot 取负），
+			//     世界坐标系 Y 向上，靠 rotateX(π) 翻正；转 Y 的 π 来自 3.x 车头朝 −Z 的建模约定。
+			final net.minecraft.world.phys.Vec3 viewOffset = train == null ? null : train.getViewOffset();
+			final net.minecraft.core.BlockPos posAverage =
+					TrainRendererBase.applyAverageTransform(viewOffset, x, y, z);
+			if (posAverage == null) {
+				// 超出渲染距离：applyAverageTransform 在此分支**没有** pushPose，
+				// 不能 pop，否则会弹掉外层 RenderTrains 的帧（历史 bug：空栈崩端）。
+				return;
 			}
-
-			// host 在 TrainRendererBase.applyAverageTransform 里 push 一次，
-			// renderCar 内再 push 一次，收尾必须 pop 两次
-			// （对齐 YMTR JonModelTrainRenderer 的 876/882 两条 popPose）。
-			matrices.popPose();
-			matrices.popPose();
+			// ★ [0.57.0] 发车时刻的「车型是否被换掉」铁证（每辆车只打一次）：
+			//   train.trainId / baseTrainType 是**服务端发下来的 Train 包**里的值，
+			//   只要这里还是 4.0 的 id（且 renderer=本类），就说明没有被换成内置车型。
+			if (train != null && MTRNEXT$TRAIN_LOG.add(train.id)) {
+				mtrnext.MtrNext.LOGGER.info(
+						"[bbmodel][train] id={} siding={} trainId='{}' baseTrainType='{}' trainCars={} spacing={} renderer={}",
+						train.id, train.sidingId, train.trainId, train.baseTrainType, train.trainCars,
+						train.spacing, getClass().getSimpleName());
+			}
+			// 诊断日志（限流）：x/y/z 是世界坐标，cam 是相机位置，二者之差即「相对视角」量级
+			final long now0 = System.currentTimeMillis();
+			if (now0 - MTRNEXT$COORD_LOG > 3000L) {
+				MTRNEXT$COORD_LOG = now0;
+				final net.minecraft.world.phys.Vec3 cam =
+						Minecraft.getInstance().gameRenderer.getMainCamera().getPosition();
+				mtrnext.MtrNext.LOGGER.info(
+						"[bbmodel] renderCar 坐标: x={} y={} z={} (世界坐标) cam={}/{}/{} yaw={} pitch={} car={}",
+						String.format("%.2f", x), String.format("%.2f", y), String.format("%.2f", z),
+						String.format("%.1f", cam.x), String.format("%.1f", cam.y), String.format("%.1f", cam.z),
+						String.format("%.3f", rotationY), String.format("%.3f", rotationZ), carNumber);
+			}
+			// ② 是 applyAverageTransform 的帧，① 是本方法的帧：必须 2 push / 2 pop。
+			try {
+				// ★★★ [0.50.0] 车体帧平移校正（「扶手漂到天上 / XYZ 全部漂移」的根治）★★★
+				//
+				//   实测证据（0.50.0 包围盒诊断，最新日志）：
+				//     车世界坐标 = (8.75, -53.00, 50.48)，相机 ≈ (11.0, -58.1, 31.8)
+				//     但「顶层组元素世界包围盒」= x[19.4..22.6] y[-26.3..-20.3] z[27.0..34.8]
+				//   ⇒ 模型整体被画到车位置 + (约 12, 30, -20) 的地方 —— 也就是「天上」。
+				//
+				//   机制（反编译 mtr/render/TrainRendererBase.applyAverageTransform 实证）：
+				//     RenderTrains 先 matrices.translate(-cameraPosition)，
+				//     applyAverageTransform 只在 **viewOffset != null** 时
+				//     matrices.translate(+cameraOffset) 把它抵消；
+				//     一旦 viewOffset 为 null（TrainClient.getViewOffset 拿不到骑乘数据），
+				//     这份 -cameraPosition 就留在矩阵里 ⇒ translate(x,y,z)（世界坐标）后
+				//     整体偏移 -cameraPosition ⇒ 车飘到天上。
+				//
+				// ★★★ [0.50.0] 车体帧观测（只记录，不干预）★★★
+				//
+				//   机制（反编译实证）：
+				//   <ul>
+				//     <li>{@code RenderTrains.render} 先 {@code translate(-cameraPosition)}；</li>
+				//     <li>{@code applyAverageTransform} 只在 <b>viewOffset != null</b> 时
+				//         {@code translate(+cameraOffset)} 抵消它；</li>
+				//     <li>而 {@code VehicleRidingClient.getViewOffset()} 的字节码在
+				//         {@code offset.isEmpty()}（没乘客）时返回 <b>aconst_null</b>，
+				//         所以「没人坐这列车 → viewOffset == null」是<b>正常</b>状态；</li>
+				//     <li>此时 matrices = R·T(-cam)，随后本方法 translate(x,y,z)（世界坐标）
+				//         ⇒ 模型原点落到 R·(x−cam)，正好是「世界点 x 的视图坐标」——
+				//         <b>这是正确的</b>，原生 JonModelTrainRenderer 走同一条链。</li>
+				//   </ul>
+				//   结论：这里<b>绝不能</b>把平移清零（0.50.0 前半版那样做是错的，
+				//   会把车额外推 +cam）。只记录一次，便于排查。
+				final org.joml.Vector3f frameT =
+						matrices.last().pose().getTranslation(new org.joml.Vector3f());
+				if (MTRNEXT$XF_LOG == 0L) {
+					MTRNEXT$XF_LOG = 1L;
+					MtrNext.LOGGER.info("[bbmodel][xf] applyAverageTransform 后平移=({},{},{}) 车世界坐标=({},{},{}) "
+									+ "train={} viewOffset={}",
+							String.format("%.2f", frameT.x), String.format("%.2f", frameT.y), String.format("%.2f", frameT.z),
+							String.format("%.2f", x), String.format("%.2f", y), String.format("%.2f", z),
+							train == null ? "null" : "非null",
+							viewOffset == null ? "null" : String.format("%.2f/%0.2f/%.2f", viewOffset.x, viewOffset.y, viewOffset.z));
+				}
+				matrices.pushPose();
+				try {
+					matrices.translate(x, y, z);
+					// ★ [0.55.1] 编组的「方向翻转（→ ←）」在世界渲染里生效。
+					//   此前只有编组界面的预览会按 Formation.Car.forward 转 180°，
+					//   世界里的 renderCar 完全没用这个标志 ⇒
+					//   真机表现为「点了方向按钮没反应 / 车头朝反了」。
+					final boolean forward = mtrnext$isForward(carNumber, formation);
+					matrices.mulPose(com.mojang.math.Axis.YP.rotation(
+							(float) (Math.PI + rotationY + (forward ? 0.0F : Math.PI))));
+					matrices.mulPose(com.mojang.math.Axis.XP.rotation((float) (Math.PI + rotationZ)));
+					final ResourceManager manager = Minecraft.getInstance().getResourceManager();
+					for (final VehicleResource.ModelLayer layer : res.models) {
+						renderLayer(manager, layer, doorValue, opening);
+					}
+				} finally {
+					// 内层 pop 放 finally：畸形 bbmodel 抛异常也不会泄漏栈帧
+					matrices.popPose();
+				}
+			} finally {
+				// 外层 pop：收掉 applyAverageTransform 的 push
+				matrices.popPose();
+			}
 		} catch (final Throwable t) {
-			MtrNext.LOGGER.debug("bbmodel renderCar failed", t);
+			warnThrottled("renderCar", t);
 		}
+	}
+
+	/**
+	 * [0.50.0] 本车所属编组（按 {@code Train.sidingId} 查；无编组返回 null）。
+	 *
+	 * <p>{@code mtr.data.Train} 有 {@code public final long sidingId}（Train.java:92），
+	 * 编组在 {@code FormationStore} 里以 {@code new UUID(0, sidingId)} 为键
+	 * （与 {@code SidingScreenMixin} / {@code FormationScreen.open} 一致）。
+	 */
+	private mtrnext.formation.Formation mtrnext$formation() {
+		if (train == null) {
+			return null;
+		}
+		try {
+			return mtrnext.formation.FormationStore.get(new java.util.UUID(0L, train.sidingId));
+		} catch (final Throwable t) {
+			return null;
+		}
+	}
+
+	/**
+	 * [0.50.0] 该节车厢应使用的车型。
+	 *
+	 * <p>优先取编组第 {@code carNumber} 节的 {@code vehicleId}；
+	 * 编组缺失/越界/该车不在车包里时回退到 {@link #trainId}（注册时的众数变体）。
+	 * 这样「编组里 M_F + M_T + M_B」会各按自己的模型渲染，不再整列同一变体。
+	 */
+	/**
+	 * [0.55.1] 编组第 {@code carNumber} 节是否是正向。
+	 *
+	 * <p>没有编组 / 越界 / 任何异常时默认正向（true），保证不改变原有行为。
+	 */
+	private boolean mtrnext$isForward(int carNumber, mtrnext.formation.Formation formation) {
+		try {
+			if (formation != null && carNumber >= 0 && carNumber < formation.cars.size()) {
+				return formation.cars.get(carNumber).forward;
+			}
+		} catch (final Throwable ignored) {
+			// 任何异常都按正向处理
+		}
+		return true;
+	}
+
+	private VehicleResource mtrnext$vehicleFor(int carNumber, mtrnext.formation.Formation formation) {
+		try {
+			if (formation != null && carNumber >= 0 && carNumber < formation.cars.size()) {
+				final String vehicleId = formation.cars.get(carNumber).vehicleId;
+				final VehicleResource r = VehiclePackLoader.getVehicle(vehicleId);
+				if (r != null) {
+					return r;
+				}
+			}
+		} catch (final Throwable ignored) {
+			// 编组数据畸形时回退
+		}
+		return VehiclePackLoader.getVehicle(trainId);
 	}
 
 	private void renderLayer(ResourceManager manager, VehicleResource.ModelLayer layer,
 			float doorValue, boolean opening) {
 		if (layer.modelResource == null || layer.modelResource.isEmpty()) {
+			diag("layer 无 modelResource（props-only 层）");
 			return; // props-only 层：只承载 gangway/barrier 参数，无几何
 		}
 		// [0.36.9] 用 ModelLayer 预计算的缓存键（原先每帧每层拼一次字符串）
 		final BbModelTree tree = BbModelTreeCache.tree(manager, layer.modelResource, layer.propertiesResource,
 				layer.treeCacheKey);
-		if (tree == null || tree.elements.isEmpty()) {
+		if (tree == null) {
+			diag("bbmodel 加载失败: " + layer.modelResource);
+			return;
+		}
+		if (tree.elements.isEmpty()) {
+			diag("bbmodel 解析出 0 元素: " + layer.modelResource);
 			return;
 		}
 
@@ -151,13 +416,24 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		final VertexConsumer vc = vertexConsumers.getBuffer(
 				RenderType.entityCutoutNoCull(BbModelTreeCache.texture(layer.textureLocation)));
 
-		final Properties4xLoader.GangwayProperties props =
-				Properties4xLoader.load(manager, layer.propertiesResource);
+		// [0.54.0] 删掉未使用的 GangwayProperties 加载：贯通道/端墙走
+		//   {@link #gangwayProperties()}（renderConnection / renderBarrier 用），
+		//   本方法只负责车体几何，此前每层每帧白做一次 properties 查找。
 		// [0.38.0] 渲染计划快照：把「type=NORMAL + 位定义名非空 + 位定义组非 null」
 		// 的过滤与位定义查表全部挪到加载期，渲染期只做遍历。
 		// 过滤规则与下方原循环的 continue 逐条对应 ⇒ 渲染输出逐字不变。
 		final LayerRenderCache plan =
 				LayerRenderCache.load(manager, layer.propertiesResource, layer.positionDefinitionsResource);
+
+		// ★ [0.48.0] 任务 2 诊断：每层一次性打印「锚点结构」。
+		//
+		//   目的（用数据代替猜测）：4.0 的 properties 里 part 的 names 指向 **顶层组名**，
+		//   渲染时按组锚点整棵子树绘制。因此任何「部件位置不对」都只有三种可能：
+		//     ① 锚点没找到（groupParts 命中 null）→ 整组不画；
+		//     ② 锚点找到了但子树里节点数不对（元素丢失/被元素名映射覆盖）；
+		//     ③ 锚点 pivot / cube 坐标本身算错（链变换错）。
+		//   这条日志把 ①②③ 一次区分开：组名→锚点 pivot + 子树节点数 + cube 包围盒。
+		mtrnext$diagAnchors(layer.treeCacheKey, tree, plan);
 
 		// 上游 ModelPropertiesPart.java:317 —— 闪烁是 **per-part** 的：
 		// 每条 wrapper 在 toModelPropertiesPartAndPositionDefinition 里
@@ -186,11 +462,121 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 					for (final float[] p : group.positions) {
 						drawInstance(anchor, vc, info, false, p[0], p[1], p[2], doorValue, opening, shouldRender, flashOn);
 					}
+					// 上游 PositionDefinitions: accept(-x, y, z, true) —— X 取反 + flipped
 					for (final float[] p : group.positionsFlipped) {
 						drawInstance(anchor, vc, info, true, -p[0], p[1], p[2], doorValue, opening, shouldRender, flashOn);
 					}
 				}
 			}
+		}
+	}
+
+	/**
+	 * [0.48.0] 任务 2 诊断（每层只打印一次）：把「组名 → 锚点」的结构摊开。
+	 *
+	 * <p>4.0 的 {@code properties} 里 part 的 {@code names} 指向 <b>bbmodel 顶层组名</b>，
+	 * 渲染按组锚点整棵子树绘制。所以「某系列部件位置不对」必然落在三种情况之一：
+	 * <ol>
+	 *   <li>锚点没命中（{@code groupParts} 返回 null）→ 整组不画；</li>
+	 *   <li>锚点命中但子树节点数异常（元素丢失，或被「元素名 → 元素节点」映射覆盖）；</li>
+	 *   <li>锚点 pivot / cube 坐标本身算错（组链变换）。</li>
+	 * </ol>
+	 * 这条日志把三者一次区分开：打印 pivot、子树节点数、cube 数、cube 包围盒（像素）。
+	 */
+	private static final java.util.Set<String> MTRNEXT$DIAG_LAYERS =
+			java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	private static void mtrnext$diagAnchors(String layerKey, BbModelTree tree, LayerRenderCache plan) {
+		if (layerKey == null || !MTRNEXT$DIAG_LAYERS.add(layerKey)) {
+			return;
+		}
+		try {
+			final StringBuilder sb = new StringBuilder();
+			sb.append("[bbmodel][diag] 层 ").append(layerKey)
+					.append("：顶层组=").append(tree.groupNames.size())
+					.append(" 元素=").append(tree.elements.size())
+					.append(" NORMAL部件=").append(plan.parts.size()).append('\n');
+			sb.append("   groupParts 键总数=").append(tree.groupParts.size())
+					.append("（含元素名映射）\n");
+
+			// [0.62.0] 可见性硬指标：properties 里每个 part 的每个 name 是否都能取到锚点。
+			//   BB5.0 格式（groups/outliner 分离）曾让组名全变空串 ⇒ 这里恒为 0/N，
+			//   表现为「整车一个部件都不画」。
+			int hitNames = 0;
+			int totalNames = 0;
+			for (final LayerRenderCache.PlanPart planPart : plan.parts) {
+				for (final String n : planPart.info.names) {
+					totalNames++;
+					if (tree.groupParts.get(n) != null) {
+						hitNames++;
+					}
+				}
+			}
+			sb.append("   部件名命中 anchor=").append(hitNames).append("/").append(totalNames).append('\n');
+			// ★ [0.50.0] 遍历<b>全部顶层组</b>（不再只看 properties 引用的组）：
+			//   M_T 的 properties 不含 hand/hand_n，但 bbmodel 里有 —— 只有这样
+			//   才能看到「扶手」到底被建到哪去了。
+			final java.util.Set<String> names = new java.util.LinkedHashSet<>(tree.groupNames);
+			for (final String name : names) {
+				final ModelPart anchor = tree.groupParts.get(name);
+				if (anchor == null) {
+					sb.append("   ").append(name).append(" -> ★锚点缺失\n");
+					continue;
+				}
+				sb.append(String.format("   %-16s 局部包围盒=%s%n", name, mtrnext$groupBounds(tree, name)));
+			}
+			MtrNext.LOGGER.info(sb.toString());
+		} catch (final Throwable t) {
+			MtrNext.LOGGER.warn("[bbmodel][diag] 锚点诊断失败", t);
+		}
+	}
+
+	/**
+	 * [0.50.0] 某顶层组全部元素在世界坐标下的包围盒（诊断用）。
+	 *
+	 * <p>链 = {@code groupPaths[组名]}（root→锚点）+ {@code Element.chain}（锚点→元素节）
+	 * + 元素 cube 中心（{@code Element.centerX/Y/Z}）。三者都是构建期存下的纯数据，
+	 * 渲染期只做矩阵乘，不改任何状态。
+	 *
+	 * @return 形如 {@code n=136 x[..] y[..] z[..]}；无元素时返回 {@code n=0}
+	 */
+	private static String mtrnext$groupBounds(BbModelTree tree, String groupName) {
+		try {
+			final java.util.List<ModelPart> rootToAnchor = tree.groupPaths.get(groupName);
+			if (rootToAnchor == null) {
+				return "链缺失";
+			}
+			float lox = Float.MAX_VALUE, loy = Float.MAX_VALUE, loz = Float.MAX_VALUE;
+			float hix = -Float.MAX_VALUE, hiy = -Float.MAX_VALUE, hiz = -Float.MAX_VALUE;
+			int count = 0;
+			for (final BbModelTree.Element e : tree.elements) {
+				if (!groupName.equals(e.groupName)) {
+					continue;
+				}
+				// ★ 从**单位矩阵**起算 ⇒ 得到「模型局部坐标」（MC 坐标、单位：格）。
+				//   这样结果与相机朝向、车体世界位置全部解耦，可与 bbmodel 的
+				//   from/to/origin 直接对照：
+				//     世界坐标 ≈ (车x + 局部x, 车y − 局部y, 车z − 局部z)   （rotateX(π)）
+				final com.mojang.blaze3d.vertex.PoseStack ps = new com.mojang.blaze3d.vertex.PoseStack();
+				for (final ModelPart p : rootToAnchor) {
+					p.translateAndRotate(ps);
+				}
+				for (final ModelPart p : e.chain) {
+					p.translateAndRotate(ps);
+				}
+				ps.translate(e.centerX, e.centerY, e.centerZ);
+				final org.joml.Vector3f w = ps.last().pose().getTranslation(new org.joml.Vector3f());
+				lox = Math.min(lox, w.x); loy = Math.min(loy, w.y); loz = Math.min(loz, w.z);
+				hix = Math.max(hix, w.x); hiy = Math.max(hiy, w.y); hiz = Math.max(hiz, w.z);
+				count++;
+			}
+			if (count == 0) {
+				return "n=0（该组无元素）";
+			}
+			return String.format("n=%d x[%.1f..%.1f] y[%.1f..%.1f] z[%.1f..%.1f]",
+					count, lox, hix, loy, hiy, loz, hiz);
+		} catch (final Throwable t) {
+			return "计算失败:" + t.getClass().getSimpleName();
 		}
 	}
 
@@ -216,24 +602,40 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 			boolean shouldRender, boolean flashOn) {
 		// [0.36.9] 门位移改写入**可复用缓冲区**（原先每次调用 new 一个 float[2]）
 		doorOffsetPixels(info, flipped, doorValue, opening);
-		matrices.pushPose();
-		// 位移统一按像素给出，这里一次性转格
-		float ox = (px + doorOffsetX) / 16.0F;
-		float oy = py / 16.0F;
-		float oz = (pz + doorOffsetZ) / 16.0F;
-		if (!shouldRender) {
-			ox = Integer.MAX_VALUE;
-			oz = Integer.MAX_VALUE;
-		}
-		if (!flashOn) {
-			oy = Integer.MAX_VALUE;
-		}
-		matrices.translate(ox, oy, oz);
-		if (flipped) {
-			matrices.mulPose(com.mojang.math.Axis.YP.rotation((float) Math.PI));
-		}
+
+		// ★★★ [0.57.0] 逐字照抄 4.0：改 ModelPart 的字段，让 MC 自己去 translate + rotate ★★★
+		//
+		//   上游三处原文（docs/_upstream/ModelPropertiesPart.java + CFR 反编译 mtr405.jar）：
+		//   ① 位置（单位：像素，不除 16）——
+		//      x = shouldRender ? (float)(partDetails.x + getDoorAnimationX(...)) : Integer.MAX_VALUE;
+		//      z = shouldRender ? (float)(partDetails.z + getInterpolatedDoorValue(...)) : Integer.MAX_VALUE;
+		//      y = flashOn ? (float) partDetails.y : Integer.MAX_VALUE;      // L320
+		//   ② 优化渲染路径 L351-361 证明量纲：
+		//      graphicsHolder.push(); translate(x / 16, y / 16, z / 16);
+		//      if (partDetails.flipped) rotateYDegrees(180);  ... pop();
+		//   ③ 普通路径 L364：
+		//      modelPart.render(graphicsHolder, x, y, z, partDetails.flipped ? π : 0, light, overlay);
+		//   ④ ModelPartExtension.render L101-108 里只做两件事：
+		//      modelPart.setPos(x, y, z);  modelPart.yRot = rotateY;  modelPart.render(...)
+		//   MC 的 translateAndRotate 再 translate(x/16,y/16,z/16)、并按 Z→Y→X 顺序乘旋转。
+		//
+		//   ⇒ 4.0 **从不自己叠矩阵**，所以这里既不 push/translate/pop，也不做 pivot 换算。
+		//   0.56.0 的 T(pivot)·R_y(π)·T(-pivot) 是错的（真机「错位更多」），已删除；
+		//   绕「模型原点转」的旧写法同样不是上游语义，一并由本实现取代。
+		//
+		//   注意：anchor 是 PartPose.ZERO 的空节点，其子树（组链 + 元素）自带各自
+		//   PartPose 的平移/旋转；把 x/y/z/yRot 写在这里，等价于在组的外层做
+		//   translate + rotate，与上游 "对组 ModelPartExtension 调用 render" 同构。
+		final float x = shouldRender ? (px + doorOffsetX) : (float) Integer.MAX_VALUE;
+		final float z = shouldRender ? (pz + doorOffsetZ) : (float) Integer.MAX_VALUE;
+		final float y = flashOn ? py : (float) Integer.MAX_VALUE;
+
+		anchor.x = x;
+		anchor.y = y;
+		anchor.z = z;
+		anchor.yRot = flipped ? (float) Math.PI : 0.0F;
+		// x/y/z 每次 drawInstance 都重设 ⇒ 共享节点无残留（4.0 也是这么复用同一批 ModelPart）
 		anchor.render(matrices, vc, 0xF000F0, OverlayTexture.NO_OVERLAY);
-		matrices.popPose();
 	}
 
 	/**
@@ -420,7 +822,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		}
 		final VertexConsumer vc = vertexConsumers.getBuffer(
 				RenderType.entityCutoutNoCull(texLocation(sideTex)));
-		final var pose = matrices.last().pose();
+		final var pose = stack().last().pose();
 		connectionQuad(vc, pose, fromX, toZ, y, faceHeight);
 		connectionQuad(vc, pose, fromXFlip, toZFlip, y, faceHeight);
 	}
@@ -431,7 +833,7 @@ public final class BbModelTrainRenderer extends TrainRendererBase {
 		}
 		final VertexConsumer vc = vertexConsumers.getBuffer(
 				RenderType.entityCutoutNoCull(texLocation(capTex)));
-		final var pose = matrices.last().pose();
+		final var pose = stack().last().pose();
 		vc.vertex(pose, (float) a.x, (float) capY, (float) a.z).color(255, 255, 255, 255).uv(0, 0).endVertex();
 		vc.vertex(pose, (float) b.x, (float) capY, (float) b.z).color(255, 255, 255, 255).uv(1, 0).endVertex();
 		vc.vertex(pose, (float) c.x, (float) capY, (float) c.z).color(255, 255, 255, 255).uv(1, 1).endVertex();
